@@ -1,0 +1,1560 @@
+<html lang="es"><head>
+<!-- Playables SDK -->
+<style data-fullcalendar=""></style><script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TextilPro - Gestión de Inventario</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>:root{--swal2-outline: 0 0 0 3px rgba(100, 150, 200, 0.5);--swal2-container-padding: 0.625em;--swal2-backdrop: rgba(0, 0, 0, 0.4);--swal2-backdrop-transition: background-color 0.15s;--swal2-width: 32em;--swal2-padding: 0 0 1.25em;--swal2-border: none;--swal2-border-radius: 0.3125rem;--swal2-background: white;--swal2-color: #545454;--swal2-show-animation: swal2-show 0.3s;--swal2-hide-animation: swal2-hide 0.15s forwards;--swal2-icon-zoom: 1;--swal2-title-padding: 0.8em 1em 0;--swal2-html-container-padding: 1em 1.6em 0.3em;--swal2-input-border: 1px solid #d9d9d9;--swal2-input-border-radius: 0.1875em;--swal2-input-box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.06), 0 0 0 3px transparent;--swal2-input-background: transparent;--swal2-input-transition: border-color 0.2s, box-shadow 0.2s;--swal2-input-hover-box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.06), 0 0 0 3px transparent;--swal2-input-focus-border: 1px solid #b4dbed;--swal2-input-focus-box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.06), 0 0 0 3px rgba(100, 150, 200, 0.5);--swal2-progress-step-background: #add8e6;--swal2-validation-message-background: #f0f0f0;--swal2-validation-message-color: #666;--swal2-footer-border-color: #eee;--swal2-footer-background: transparent;--swal2-footer-color: inherit;--swal2-timer-progress-bar-background: rgba(0, 0, 0, 0.3);--swal2-close-button-position: initial;--swal2-close-button-inset: auto;--swal2-close-button-font-size: 2.5em;--swal2-close-button-color: #ccc;--swal2-close-button-transition: color 0.2s, box-shadow 0.2s;--swal2-close-button-outline: initial;--swal2-close-button-box-shadow: inset 0 0 0 3px transparent;--swal2-close-button-focus-box-shadow: inset var(--swal2-outline);--swal2-close-button-hover-transform: none;--swal2-actions-justify-content: center;--swal2-actions-width: auto;--swal2-actions-margin: 1.25em auto 0;--swal2-actions-padding: 0;--swal2-actions-border-radius: 0;--swal2-actions-background: transparent;--swal2-action-button-transition: background-color 0.2s, box-shadow 0.2s;--swal2-action-button-hover: black 10%;--swal2-action-button-active: black 10%;--swal2-confirm-button-box-shadow: none;--swal2-confirm-button-border-radius: 0.25em;--swal2-confirm-button-background-color: #7066e0;--swal2-confirm-button-color: #fff;--swal2-deny-button-box-shadow: none;--swal2-deny-button-border-radius: 0.25em;--swal2-deny-button-background-color: #dc3741;--swal2-deny-button-color: #fff;--swal2-cancel-button-box-shadow: none;--swal2-cancel-button-border-radius: 0.25em;--swal2-cancel-button-background-color: #6e7881;--swal2-cancel-button-color: #fff;--swal2-toast-show-animation: swal2-toast-show 0.5s;--swal2-toast-hide-animation: swal2-toast-hide 0.1s forwards;--swal2-toast-border: none;--swal2-toast-box-shadow: 0 0 1px hsl(0deg 0% 0% / 0.075), 0 1px 2px hsl(0deg 0% 0% / 0.075), 1px 2px 4px hsl(0deg 0% 0% / 0.075), 1px 3px 8px hsl(0deg 0% 0% / 0.075), 2px 4px 16px hsl(0deg 0% 0% / 0.075)}[data-swal2-theme=dark]{--swal2-dark-theme-black: #19191a;--swal2-dark-theme-white: #e1e1e1;--swal2-background: var(--swal2-dark-theme-black);--swal2-color: var(--swal2-dark-theme-white);--swal2-footer-border-color: #555;--swal2-input-background: color-mix(in srgb, var(--swal2-dark-theme-black), var(--swal2-dark-theme-white) 10%);--swal2-validation-message-background: color-mix( in srgb, var(--swal2-dark-theme-black), var(--swal2-dark-theme-white) 10% );--swal2-validation-message-color: var(--swal2-dark-theme-white);--swal2-timer-progress-bar-background: rgba(255, 255, 255, 0.7)}@media(prefers-color-scheme: dark){[data-swal2-theme=auto]{--swal2-dark-theme-black: #19191a;--swal2-dark-theme-white: #e1e1e1;--swal2-background: var(--swal2-dark-theme-black);--swal2-color: var(--swal2-dark-theme-white);--swal2-footer-border-color: #555;--swal2-input-background: color-mix(in srgb, var(--swal2-dark-theme-black), var(--swal2-dark-theme-white) 10%);--swal2-validation-message-background: color-mix( in srgb, var(--swal2-dark-theme-black), var(--swal2-dark-theme-white) 10% );--swal2-validation-message-color: var(--swal2-dark-theme-white);--swal2-timer-progress-bar-background: rgba(255, 255, 255, 0.7)}}body.swal2-shown:not(.swal2-no-backdrop,.swal2-toast-shown){overflow:hidden}body.swal2-height-auto{height:auto !important}body.swal2-no-backdrop .swal2-container{background-color:rgba(0,0,0,0) !important;pointer-events:none}body.swal2-no-backdrop .swal2-container .swal2-popup{pointer-events:auto}body.swal2-no-backdrop .swal2-container .swal2-modal{box-shadow:0 0 10px var(--swal2-backdrop)}body.swal2-toast-shown .swal2-container{box-sizing:border-box;width:360px;max-width:100%;background-color:rgba(0,0,0,0);pointer-events:none}body.swal2-toast-shown .swal2-container.swal2-top{inset:0 auto auto 50%;transform:translateX(-50%)}body.swal2-toast-shown .swal2-container.swal2-top-end,body.swal2-toast-shown .swal2-container.swal2-top-right{inset:0 0 auto auto}body.swal2-toast-shown .swal2-container.swal2-top-start,body.swal2-toast-shown .swal2-container.swal2-top-left{inset:0 auto auto 0}body.swal2-toast-shown .swal2-container.swal2-center-start,body.swal2-toast-shown .swal2-container.swal2-center-left{inset:50% auto auto 0;transform:translateY(-50%)}body.swal2-toast-shown .swal2-container.swal2-center{inset:50% auto auto 50%;transform:translate(-50%, -50%)}body.swal2-toast-shown .swal2-container.swal2-center-end,body.swal2-toast-shown .swal2-container.swal2-center-right{inset:50% 0 auto auto;transform:translateY(-50%)}body.swal2-toast-shown .swal2-container.swal2-bottom-start,body.swal2-toast-shown .swal2-container.swal2-bottom-left{inset:auto auto 0 0}body.swal2-toast-shown .swal2-container.swal2-bottom{inset:auto auto 0 50%;transform:translateX(-50%)}body.swal2-toast-shown .swal2-container.swal2-bottom-end,body.swal2-toast-shown .swal2-container.swal2-bottom-right{inset:auto 0 0 auto}@media print{body.swal2-shown:not(.swal2-no-backdrop,.swal2-toast-shown){overflow-y:scroll !important}body.swal2-shown:not(.swal2-no-backdrop,.swal2-toast-shown)>[aria-hidden=true]{display:none}body.swal2-shown:not(.swal2-no-backdrop,.swal2-toast-shown) .swal2-container{position:static !important}}div:where(.swal2-container){display:grid;position:fixed;z-index:1060;inset:0;box-sizing:border-box;grid-template-areas:"top-start     top            top-end" "center-start  center         center-end" "bottom-start  bottom-center  bottom-end";grid-template-rows:minmax(min-content, auto) minmax(min-content, auto) minmax(min-content, auto);height:100%;padding:var(--swal2-container-padding);overflow-x:hidden;transition:var(--swal2-backdrop-transition);-webkit-overflow-scrolling:touch}div:where(.swal2-container).swal2-backdrop-show,div:where(.swal2-container).swal2-noanimation{background:var(--swal2-backdrop)}div:where(.swal2-container).swal2-backdrop-hide{background:rgba(0,0,0,0) !important}div:where(.swal2-container).swal2-top-start,div:where(.swal2-container).swal2-center-start,div:where(.swal2-container).swal2-bottom-start{grid-template-columns:minmax(0, 1fr) auto auto}div:where(.swal2-container).swal2-top,div:where(.swal2-container).swal2-center,div:where(.swal2-container).swal2-bottom{grid-template-columns:auto minmax(0, 1fr) auto}div:where(.swal2-container).swal2-top-end,div:where(.swal2-container).swal2-center-end,div:where(.swal2-container).swal2-bottom-end{grid-template-columns:auto auto minmax(0, 1fr)}div:where(.swal2-container).swal2-top-start>.swal2-popup{align-self:start}div:where(.swal2-container).swal2-top>.swal2-popup{grid-column:2;place-self:start center}div:where(.swal2-container).swal2-top-end>.swal2-popup,div:where(.swal2-container).swal2-top-right>.swal2-popup{grid-column:3;place-self:start end}div:where(.swal2-container).swal2-center-start>.swal2-popup,div:where(.swal2-container).swal2-center-left>.swal2-popup{grid-row:2;align-self:center}div:where(.swal2-container).swal2-center>.swal2-popup{grid-column:2;grid-row:2;place-self:center center}div:where(.swal2-container).swal2-center-end>.swal2-popup,div:where(.swal2-container).swal2-center-right>.swal2-popup{grid-column:3;grid-row:2;place-self:center end}div:where(.swal2-container).swal2-bottom-start>.swal2-popup,div:where(.swal2-container).swal2-bottom-left>.swal2-popup{grid-column:1;grid-row:3;align-self:end}div:where(.swal2-container).swal2-bottom>.swal2-popup{grid-column:2;grid-row:3;place-self:end center}div:where(.swal2-container).swal2-bottom-end>.swal2-popup,div:where(.swal2-container).swal2-bottom-right>.swal2-popup{grid-column:3;grid-row:3;place-self:end end}div:where(.swal2-container).swal2-grow-row>.swal2-popup,div:where(.swal2-container).swal2-grow-fullscreen>.swal2-popup{grid-column:1/4;width:100%}div:where(.swal2-container).swal2-grow-column>.swal2-popup,div:where(.swal2-container).swal2-grow-fullscreen>.swal2-popup{grid-row:1/4;align-self:stretch}div:where(.swal2-container).swal2-no-transition{transition:none !important}div:where(.swal2-container)[popover]{width:auto;border:0}div:where(.swal2-container) div:where(.swal2-popup){display:none;position:relative;box-sizing:border-box;grid-template-columns:minmax(0, 100%);width:var(--swal2-width);max-width:100%;padding:var(--swal2-padding);border:var(--swal2-border);border-radius:var(--swal2-border-radius);background:var(--swal2-background);color:var(--swal2-color);font-family:inherit;font-size:1rem}div:where(.swal2-container) div:where(.swal2-popup):focus{outline:none}div:where(.swal2-container) div:where(.swal2-popup).swal2-loading{overflow-y:hidden}div:where(.swal2-container) div:where(.swal2-popup).swal2-draggable{cursor:grab}div:where(.swal2-container) div:where(.swal2-popup).swal2-draggable div:where(.swal2-icon){cursor:grab}div:where(.swal2-container) div:where(.swal2-popup).swal2-dragging{cursor:grabbing}div:where(.swal2-container) div:where(.swal2-popup).swal2-dragging div:where(.swal2-icon){cursor:grabbing}div:where(.swal2-container) h2:where(.swal2-title){position:relative;max-width:100%;margin:0;padding:var(--swal2-title-padding);color:inherit;font-size:1.875em;font-weight:600;text-align:center;text-transform:none;overflow-wrap:break-word;cursor:initial}div:where(.swal2-container) div:where(.swal2-actions){display:flex;z-index:1;box-sizing:border-box;flex-wrap:wrap;align-items:center;justify-content:var(--swal2-actions-justify-content);width:var(--swal2-actions-width);margin:var(--swal2-actions-margin);padding:var(--swal2-actions-padding);border-radius:var(--swal2-actions-border-radius);background:var(--swal2-actions-background)}div:where(.swal2-container) div:where(.swal2-loader){display:none;align-items:center;justify-content:center;width:2.2em;height:2.2em;margin:0 1.875em;animation:swal2-rotate-loading 1.5s linear 0s infinite normal;border-width:.25em;border-style:solid;border-radius:100%;border-color:#2778c4 rgba(0,0,0,0) #2778c4 rgba(0,0,0,0)}div:where(.swal2-container) button:where(.swal2-styled){margin:.3125em;padding:.625em 1.1em;transition:var(--swal2-action-button-transition);border:none;box-shadow:0 0 0 3px rgba(0,0,0,0);font-weight:500}div:where(.swal2-container) button:where(.swal2-styled):not([disabled]){cursor:pointer}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-confirm){border-radius:var(--swal2-confirm-button-border-radius);background:initial;background-color:var(--swal2-confirm-button-background-color);box-shadow:var(--swal2-confirm-button-box-shadow);color:var(--swal2-confirm-button-color);font-size:1em}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-confirm):hover{background-color:color-mix(in srgb, var(--swal2-confirm-button-background-color), var(--swal2-action-button-hover))}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-confirm):active{background-color:color-mix(in srgb, var(--swal2-confirm-button-background-color), var(--swal2-action-button-active))}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-deny){border-radius:var(--swal2-deny-button-border-radius);background:initial;background-color:var(--swal2-deny-button-background-color);box-shadow:var(--swal2-deny-button-box-shadow);color:var(--swal2-deny-button-color);font-size:1em}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-deny):hover{background-color:color-mix(in srgb, var(--swal2-deny-button-background-color), var(--swal2-action-button-hover))}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-deny):active{background-color:color-mix(in srgb, var(--swal2-deny-button-background-color), var(--swal2-action-button-active))}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-cancel){border-radius:var(--swal2-cancel-button-border-radius);background:initial;background-color:var(--swal2-cancel-button-background-color);box-shadow:var(--swal2-cancel-button-box-shadow);color:var(--swal2-cancel-button-color);font-size:1em}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-cancel):hover{background-color:color-mix(in srgb, var(--swal2-cancel-button-background-color), var(--swal2-action-button-hover))}div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-cancel):active{background-color:color-mix(in srgb, var(--swal2-cancel-button-background-color), var(--swal2-action-button-active))}div:where(.swal2-container) button:where(.swal2-styled):focus-visible{outline:none;box-shadow:var(--swal2-action-button-focus-box-shadow)}div:where(.swal2-container) button:where(.swal2-styled)[disabled]:not(.swal2-loading){opacity:.4}div:where(.swal2-container) button:where(.swal2-styled)::-moz-focus-inner{border:0}div:where(.swal2-container) div:where(.swal2-footer){margin:1em 0 0;padding:1em 1em 0;border-top:1px solid var(--swal2-footer-border-color);background:var(--swal2-footer-background);color:var(--swal2-footer-color);font-size:1em;text-align:center;cursor:initial}div:where(.swal2-container) .swal2-timer-progress-bar-container{position:absolute;right:0;bottom:0;left:0;grid-column:auto !important;overflow:hidden;border-bottom-right-radius:var(--swal2-border-radius);border-bottom-left-radius:var(--swal2-border-radius)}div:where(.swal2-container) div:where(.swal2-timer-progress-bar){width:100%;height:.25em;background:var(--swal2-timer-progress-bar-background)}div:where(.swal2-container) img:where(.swal2-image){max-width:100%;margin:2em auto 1em;cursor:initial}div:where(.swal2-container) button:where(.swal2-close){position:var(--swal2-close-button-position);inset:var(--swal2-close-button-inset);z-index:2;align-items:center;justify-content:center;width:1.2em;height:1.2em;margin-top:0;margin-right:0;margin-bottom:-1.2em;padding:0;overflow:hidden;transition:var(--swal2-close-button-transition);border:none;border-radius:var(--swal2-border-radius);outline:var(--swal2-close-button-outline);background:rgba(0,0,0,0);color:var(--swal2-close-button-color);font-family:monospace;font-size:var(--swal2-close-button-font-size);cursor:pointer;justify-self:end}div:where(.swal2-container) button:where(.swal2-close):hover{transform:var(--swal2-close-button-hover-transform);background:rgba(0,0,0,0);color:#f27474}div:where(.swal2-container) button:where(.swal2-close):focus-visible{outline:none;box-shadow:var(--swal2-close-button-focus-box-shadow)}div:where(.swal2-container) button:where(.swal2-close)::-moz-focus-inner{border:0}div:where(.swal2-container) div:where(.swal2-html-container){z-index:1;justify-content:center;margin:0;padding:var(--swal2-html-container-padding);overflow:auto;color:inherit;font-size:1.125em;font-weight:normal;line-height:normal;text-align:center;overflow-wrap:break-word;word-break:break-word;cursor:initial}div:where(.swal2-container) input:where(.swal2-input),div:where(.swal2-container) input:where(.swal2-file),div:where(.swal2-container) textarea:where(.swal2-textarea),div:where(.swal2-container) select:where(.swal2-select),div:where(.swal2-container) div:where(.swal2-radio),div:where(.swal2-container) label:where(.swal2-checkbox){margin:1em 2em 3px}div:where(.swal2-container) input:where(.swal2-input),div:where(.swal2-container) input:where(.swal2-file),div:where(.swal2-container) textarea:where(.swal2-textarea){box-sizing:border-box;width:auto;transition:var(--swal2-input-transition);border:var(--swal2-input-border);border-radius:var(--swal2-input-border-radius);background:var(--swal2-input-background);box-shadow:var(--swal2-input-box-shadow);color:inherit;font-size:1.125em}div:where(.swal2-container) input:where(.swal2-input).swal2-inputerror,div:where(.swal2-container) input:where(.swal2-file).swal2-inputerror,div:where(.swal2-container) textarea:where(.swal2-textarea).swal2-inputerror{border-color:#f27474 !important;box-shadow:0 0 2px #f27474 !important}div:where(.swal2-container) input:where(.swal2-input):hover,div:where(.swal2-container) input:where(.swal2-file):hover,div:where(.swal2-container) textarea:where(.swal2-textarea):hover{box-shadow:var(--swal2-input-hover-box-shadow)}div:where(.swal2-container) input:where(.swal2-input):focus,div:where(.swal2-container) input:where(.swal2-file):focus,div:where(.swal2-container) textarea:where(.swal2-textarea):focus{border:var(--swal2-input-focus-border);outline:none;box-shadow:var(--swal2-input-focus-box-shadow)}div:where(.swal2-container) input:where(.swal2-input)::placeholder,div:where(.swal2-container) input:where(.swal2-file)::placeholder,div:where(.swal2-container) textarea:where(.swal2-textarea)::placeholder{color:#ccc}div:where(.swal2-container) .swal2-range{margin:1em 2em 3px;background:var(--swal2-background)}div:where(.swal2-container) .swal2-range input{width:80%}div:where(.swal2-container) .swal2-range output{width:20%;color:inherit;font-weight:600;text-align:center}div:where(.swal2-container) .swal2-range input,div:where(.swal2-container) .swal2-range output{height:2.625em;padding:0;font-size:1.125em;line-height:2.625em}div:where(.swal2-container) .swal2-input{height:2.625em;padding:0 .75em}div:where(.swal2-container) .swal2-file{width:75%;margin-right:auto;margin-left:auto;background:var(--swal2-input-background);font-size:1.125em}div:where(.swal2-container) .swal2-textarea{height:6.75em;padding:.75em}div:where(.swal2-container) .swal2-select{min-width:50%;max-width:100%;padding:.375em .625em;background:var(--swal2-input-background);color:inherit;font-size:1.125em}div:where(.swal2-container) .swal2-radio,div:where(.swal2-container) .swal2-checkbox{align-items:center;justify-content:center;background:var(--swal2-background);color:inherit}div:where(.swal2-container) .swal2-radio label,div:where(.swal2-container) .swal2-checkbox label{margin:0 .6em;font-size:1.125em}div:where(.swal2-container) .swal2-radio input,div:where(.swal2-container) .swal2-checkbox input{flex-shrink:0;margin:0 .4em}div:where(.swal2-container) label:where(.swal2-input-label){display:flex;justify-content:center;margin:1em auto 0}div:where(.swal2-container) div:where(.swal2-validation-message){align-items:center;justify-content:center;margin:1em 0 0;padding:.625em;overflow:hidden;background:var(--swal2-validation-message-background);color:var(--swal2-validation-message-color);font-size:1em;font-weight:300}div:where(.swal2-container) div:where(.swal2-validation-message)::before{content:"!";display:inline-block;width:1.5em;min-width:1.5em;height:1.5em;margin:0 .625em;border-radius:50%;background-color:#f27474;color:#fff;font-weight:600;line-height:1.5em;text-align:center}div:where(.swal2-container) .swal2-progress-steps{flex-wrap:wrap;align-items:center;max-width:100%;margin:1.25em auto;padding:0;background:rgba(0,0,0,0);font-weight:600}div:where(.swal2-container) .swal2-progress-steps li{display:inline-block;position:relative}div:where(.swal2-container) .swal2-progress-steps .swal2-progress-step{z-index:20;flex-shrink:0;width:2em;height:2em;border-radius:2em;background:#2778c4;color:#fff;line-height:2em;text-align:center}div:where(.swal2-container) .swal2-progress-steps .swal2-progress-step.swal2-active-progress-step{background:#2778c4}div:where(.swal2-container) .swal2-progress-steps .swal2-progress-step.swal2-active-progress-step~.swal2-progress-step{background:var(--swal2-progress-step-background);color:#fff}div:where(.swal2-container) .swal2-progress-steps .swal2-progress-step.swal2-active-progress-step~.swal2-progress-step-line{background:var(--swal2-progress-step-background)}div:where(.swal2-container) .swal2-progress-steps .swal2-progress-step-line{z-index:10;flex-shrink:0;width:2.5em;height:.4em;margin:0 -1px;background:#2778c4}div:where(.swal2-icon){position:relative;box-sizing:content-box;justify-content:center;width:5em;height:5em;margin:2.5em auto .6em;zoom:var(--swal2-icon-zoom);border:.25em solid rgba(0,0,0,0);border-radius:50%;border-color:#000;font-family:inherit;line-height:5em;cursor:default;user-select:none}div:where(.swal2-icon) .swal2-icon-content{display:flex;align-items:center;font-size:3.75em}div:where(.swal2-icon).swal2-error{border-color:#f27474;color:#f27474}div:where(.swal2-icon).swal2-error .swal2-x-mark{position:relative;flex-grow:1}div:where(.swal2-icon).swal2-error [class^=swal2-x-mark-line]{display:block;position:absolute;top:2.3125em;width:2.9375em;height:.3125em;border-radius:.125em;background-color:#f27474}div:where(.swal2-icon).swal2-error [class^=swal2-x-mark-line][class$=left]{left:1.0625em;transform:rotate(45deg)}div:where(.swal2-icon).swal2-error [class^=swal2-x-mark-line][class$=right]{right:1em;transform:rotate(-45deg)}div:where(.swal2-icon).swal2-error.swal2-icon-show{animation:swal2-animate-error-icon .5s}div:where(.swal2-icon).swal2-error.swal2-icon-show .swal2-x-mark{animation:swal2-animate-error-x-mark .5s}div:where(.swal2-icon).swal2-warning{border-color:#f8bb86;color:#f8bb86}div:where(.swal2-icon).swal2-warning.swal2-icon-show{animation:swal2-animate-error-icon .5s}div:where(.swal2-icon).swal2-warning.swal2-icon-show .swal2-icon-content{animation:swal2-animate-i-mark .5s}div:where(.swal2-icon).swal2-info{border-color:#3fc3ee;color:#3fc3ee}div:where(.swal2-icon).swal2-info.swal2-icon-show{animation:swal2-animate-error-icon .5s}div:where(.swal2-icon).swal2-info.swal2-icon-show .swal2-icon-content{animation:swal2-animate-i-mark .8s}div:where(.swal2-icon).swal2-question{border-color:#87adbd;color:#87adbd}div:where(.swal2-icon).swal2-question.swal2-icon-show{animation:swal2-animate-error-icon .5s}div:where(.swal2-icon).swal2-question.swal2-icon-show .swal2-icon-content{animation:swal2-animate-question-mark .8s}div:where(.swal2-icon).swal2-success{border-color:#a5dc86;color:#a5dc86}div:where(.swal2-icon).swal2-success [class^=swal2-success-circular-line]{position:absolute;width:3.75em;height:7.5em;border-radius:50%}div:where(.swal2-icon).swal2-success [class^=swal2-success-circular-line][class$=left]{top:-0.4375em;left:-2.0635em;transform:rotate(-45deg);transform-origin:3.75em 3.75em;border-radius:7.5em 0 0 7.5em}div:where(.swal2-icon).swal2-success [class^=swal2-success-circular-line][class$=right]{top:-0.6875em;left:1.875em;transform:rotate(-45deg);transform-origin:0 3.75em;border-radius:0 7.5em 7.5em 0}div:where(.swal2-icon).swal2-success .swal2-success-ring{position:absolute;z-index:2;top:-0.25em;left:-0.25em;box-sizing:content-box;width:100%;height:100%;border:.25em solid rgba(165,220,134,.3);border-radius:50%}div:where(.swal2-icon).swal2-success .swal2-success-fix{position:absolute;z-index:1;top:.5em;left:1.625em;width:.4375em;height:5.625em;transform:rotate(-45deg)}div:where(.swal2-icon).swal2-success [class^=swal2-success-line]{display:block;position:absolute;z-index:2;height:.3125em;border-radius:.125em;background-color:#a5dc86}div:where(.swal2-icon).swal2-success [class^=swal2-success-line][class$=tip]{top:2.875em;left:.8125em;width:1.5625em;transform:rotate(45deg)}div:where(.swal2-icon).swal2-success [class^=swal2-success-line][class$=long]{top:2.375em;right:.5em;width:2.9375em;transform:rotate(-45deg)}div:where(.swal2-icon).swal2-success.swal2-icon-show .swal2-success-line-tip{animation:swal2-animate-success-line-tip .75s}div:where(.swal2-icon).swal2-success.swal2-icon-show .swal2-success-line-long{animation:swal2-animate-success-line-long .75s}div:where(.swal2-icon).swal2-success.swal2-icon-show .swal2-success-circular-line-right{animation:swal2-rotate-success-circular-line 4.25s ease-in}[class^=swal2]{-webkit-tap-highlight-color:rgba(0,0,0,0)}.swal2-show{animation:var(--swal2-show-animation)}.swal2-hide{animation:var(--swal2-hide-animation)}.swal2-noanimation{transition:none}.swal2-scrollbar-measure{position:absolute;top:-9999px;width:50px;height:50px;overflow:scroll}.swal2-rtl .swal2-close{margin-right:initial;margin-left:0}.swal2-rtl .swal2-timer-progress-bar{right:0;left:auto}.swal2-toast{box-sizing:border-box;grid-column:1/4 !important;grid-row:1/4 !important;grid-template-columns:min-content auto min-content;padding:1em;overflow-y:hidden;border:var(--swal2-toast-border);background:var(--swal2-background);box-shadow:var(--swal2-toast-box-shadow);pointer-events:auto}.swal2-toast>*{grid-column:2}.swal2-toast h2:where(.swal2-title){margin:.5em 1em;padding:0;font-size:1em;text-align:initial}.swal2-toast .swal2-loading{justify-content:center}.swal2-toast input:where(.swal2-input){height:2em;margin:.5em;font-size:1em}.swal2-toast .swal2-validation-message{font-size:1em}.swal2-toast div:where(.swal2-footer){margin:.5em 0 0;padding:.5em 0 0;font-size:.8em}.swal2-toast button:where(.swal2-close){grid-column:3/3;grid-row:1/99;align-self:center;width:.8em;height:.8em;margin:0;font-size:2em}.swal2-toast div:where(.swal2-html-container){margin:.5em 1em;padding:0;overflow:initial;font-size:1em;text-align:initial}.swal2-toast div:where(.swal2-html-container):empty{padding:0}.swal2-toast .swal2-loader{grid-column:1;grid-row:1/99;align-self:center;width:2em;height:2em;margin:.25em}.swal2-toast .swal2-icon{grid-column:1;grid-row:1/99;align-self:center;width:2em;min-width:2em;height:2em;margin:0 .5em 0 0}.swal2-toast .swal2-icon .swal2-icon-content{display:flex;align-items:center;font-size:1.8em;font-weight:bold}.swal2-toast .swal2-icon.swal2-success .swal2-success-ring{width:2em;height:2em}.swal2-toast .swal2-icon.swal2-error [class^=swal2-x-mark-line]{top:.875em;width:1.375em}.swal2-toast .swal2-icon.swal2-error [class^=swal2-x-mark-line][class$=left]{left:.3125em}.swal2-toast .swal2-icon.swal2-error [class^=swal2-x-mark-line][class$=right]{right:.3125em}.swal2-toast div:where(.swal2-actions){justify-content:flex-start;height:auto;margin:0;margin-top:.5em;padding:0 .5em}.swal2-toast button:where(.swal2-styled){margin:.25em .5em;padding:.4em .6em;font-size:1em}.swal2-toast .swal2-success{border-color:#a5dc86}.swal2-toast .swal2-success [class^=swal2-success-circular-line]{position:absolute;width:1.6em;height:3em;border-radius:50%}.swal2-toast .swal2-success [class^=swal2-success-circular-line][class$=left]{top:-0.8em;left:-0.5em;transform:rotate(-45deg);transform-origin:2em 2em;border-radius:4em 0 0 4em}.swal2-toast .swal2-success [class^=swal2-success-circular-line][class$=right]{top:-0.25em;left:.9375em;transform-origin:0 1.5em;border-radius:0 4em 4em 0}.swal2-toast .swal2-success .swal2-success-ring{width:2em;height:2em}.swal2-toast .swal2-success .swal2-success-fix{top:0;left:.4375em;width:.4375em;height:2.6875em}.swal2-toast .swal2-success [class^=swal2-success-line]{height:.3125em}.swal2-toast .swal2-success [class^=swal2-success-line][class$=tip]{top:1.125em;left:.1875em;width:.75em}.swal2-toast .swal2-success [class^=swal2-success-line][class$=long]{top:.9375em;right:.1875em;width:1.375em}.swal2-toast .swal2-success.swal2-icon-show .swal2-success-line-tip{animation:swal2-toast-animate-success-line-tip .75s}.swal2-toast .swal2-success.swal2-icon-show .swal2-success-line-long{animation:swal2-toast-animate-success-line-long .75s}.swal2-toast.swal2-show{animation:var(--swal2-toast-show-animation)}.swal2-toast.swal2-hide{animation:var(--swal2-toast-hide-animation)}@keyframes swal2-show{0%{transform:translate3d(0, -50px, 0) scale(0.9);opacity:0}100%{transform:translate3d(0, 0, 0) scale(1);opacity:1}}@keyframes swal2-hide{0%{transform:translate3d(0, 0, 0) scale(1);opacity:1}100%{transform:translate3d(0, -50px, 0) scale(0.9);opacity:0}}@keyframes swal2-animate-success-line-tip{0%{top:1.1875em;left:.0625em;width:0}54%{top:1.0625em;left:.125em;width:0}70%{top:2.1875em;left:-0.375em;width:3.125em}84%{top:3em;left:1.3125em;width:1.0625em}100%{top:2.8125em;left:.8125em;width:1.5625em}}@keyframes swal2-animate-success-line-long{0%{top:3.375em;right:2.875em;width:0}65%{top:3.375em;right:2.875em;width:0}84%{top:2.1875em;right:0;width:3.4375em}100%{top:2.375em;right:.5em;width:2.9375em}}@keyframes swal2-rotate-success-circular-line{0%{transform:rotate(-45deg)}5%{transform:rotate(-45deg)}12%{transform:rotate(-405deg)}100%{transform:rotate(-405deg)}}@keyframes swal2-animate-error-x-mark{0%{margin-top:1.625em;transform:scale(0.4);opacity:0}50%{margin-top:1.625em;transform:scale(0.4);opacity:0}80%{margin-top:-0.375em;transform:scale(1.15)}100%{margin-top:0;transform:scale(1);opacity:1}}@keyframes swal2-animate-error-icon{0%{transform:rotateX(100deg);opacity:0}100%{transform:rotateX(0deg);opacity:1}}@keyframes swal2-rotate-loading{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}@keyframes swal2-animate-question-mark{0%{transform:rotateY(-360deg)}100%{transform:rotateY(0)}}@keyframes swal2-animate-i-mark{0%{transform:rotateZ(45deg);opacity:0}25%{transform:rotateZ(-25deg);opacity:.4}50%{transform:rotateZ(15deg);opacity:.8}75%{transform:rotateZ(-5deg);opacity:1}100%{transform:rotateX(0);opacity:1}}@keyframes swal2-toast-show{0%{transform:translateY(-0.625em) rotateZ(2deg)}33%{transform:translateY(0) rotateZ(-2deg)}66%{transform:translateY(0.3125em) rotateZ(2deg)}100%{transform:translateY(0) rotateZ(0deg)}}@keyframes swal2-toast-hide{100%{transform:rotateZ(1deg);opacity:0}}@keyframes swal2-toast-animate-success-line-tip{0%{top:.5625em;left:.0625em;width:0}54%{top:.125em;left:.125em;width:0}70%{top:.625em;left:-0.25em;width:1.625em}84%{top:1.0625em;left:.75em;width:.5em}100%{top:1.125em;left:.1875em;width:.75em}}@keyframes swal2-toast-animate-success-line-long{0%{top:1.625em;right:1.375em;width:0}65%{top:1.25em;right:.9375em;width:0}84%{top:.9375em;right:0;width:1.125em}100%{top:.9375em;right:.1875em;width:1.375em}}</style>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+  :root {
+    --primary: #4f46e5;
+    --primary-dark: #4338ca;
+  }
+  
+  .fc .fc-button-primary {
+    background-color: var(--primary);
+    border-color: var(--primary);
+  }
+  
+  .fc .fc-button-primary:hover {
+    background-color: var(--primary-dark);
+    border-color: var(--primary-dark);
+  }
+  
+  .fc .fc-daygrid-event {
+    cursor: pointer;
+  }
+  
+  .swal2-input, .swal2-select {
+    @apply border-gray-300;
+  }
+  
+  #reader {
+    width: 100%;
+  }
+  
+  .table-container::-webkit-scrollbar {
+    height: 8px;
+  }
+  
+  .table-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+  
+  .table-container::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+  }
+  
+  .animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+  }
+  
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+</style>
+<style>*, ::before, ::after{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/* ! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com */*,::after,::before{box-sizing:border-box;border-width:0;border-style:solid;border-color:#e5e7eb}::after,::before{--tw-content:''}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;tab-size:4;font-family:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0;padding:0}legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.container{width:100%}@media (min-width: 640px){.container{max-width:640px}}@media (min-width: 768px){.container{max-width:768px}}@media (min-width: 1024px){.container{max-width:1024px}}@media (min-width: 1280px){.container{max-width:1280px}}@media (min-width: 1536px){.container{max-width:1536px}}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.sticky{position:sticky}.inset-0{inset:0px}.left-3{left:0.75rem}.top-0{top:0px}.top-3{top:0.75rem}.top-\[72px\]{top:72px}.z-30{z-index:30}.z-40{z-index:40}.z-50{z-index:50}.mx-auto{margin-left:auto;margin-right:auto}.mb-4{margin-bottom:1rem}.mb-6{margin-bottom:1.5rem}.mr-2{margin-right:0.5rem}.mt-1{margin-top:0.25rem}.flex{display:flex}.grid{display:grid}.hidden{display:none}.h-4{height:1rem}.w-4{width:1rem}.w-full{width:100%}.min-w-\[200px\]{min-width:200px}.max-w-lg{max-width:32rem}.flex-1{flex:1 1 0%}.grid-cols-1{grid-template-columns:repeat(1, minmax(0, 1fr))}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-2{gap:0.5rem}.gap-3{gap:0.75rem}.gap-4{gap:1rem}.gap-6{gap:1.5rem}.space-y-2 > :not([hidden]) ~ :not([hidden]){--tw-space-y-reverse:0;margin-top:calc(0.5rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(0.5rem * var(--tw-space-y-reverse))}.divide-y > :not([hidden]) ~ :not([hidden]){--tw-divide-y-reverse:0;border-top-width:calc(1px * calc(1 - var(--tw-divide-y-reverse)));border-bottom-width:calc(1px * var(--tw-divide-y-reverse))}.divide-gray-200 > :not([hidden]) ~ :not([hidden]){--tw-divide-opacity:1;border-color:rgb(229 231 235 / var(--tw-divide-opacity, 1))}.overflow-hidden{overflow:hidden}.overflow-x-auto{overflow-x:auto}.whitespace-nowrap{white-space:nowrap}.rounded{border-radius:0.25rem}.rounded-lg{border-radius:0.5rem}.rounded-xl{border-radius:0.75rem}.border{border-width:1px}.border-b{border-bottom-width:1px}.border-b-2{border-bottom-width:2px}.border-gray-200{--tw-border-opacity:1;border-color:rgb(229 231 235 / var(--tw-border-opacity, 1))}.border-gray-300{--tw-border-opacity:1;border-color:rgb(209 213 219 / var(--tw-border-opacity, 1))}.border-indigo-200{--tw-border-opacity:1;border-color:rgb(199 210 254 / var(--tw-border-opacity, 1))}.border-indigo-600{--tw-border-opacity:1;border-color:rgb(79 70 229 / var(--tw-border-opacity, 1))}.border-transparent{border-color:transparent}.border-amber-200{--tw-border-opacity:1;border-color:rgb(253 230 138 / var(--tw-border-opacity, 1))}.bg-gray-50{--tw-bg-opacity:1;background-color:rgb(249 250 251 / var(--tw-bg-opacity, 1))}.bg-black{--tw-bg-opacity:1;background-color:rgb(0 0 0 / var(--tw-bg-opacity, 1))}.bg-emerald-500{--tw-bg-opacity:1;background-color:rgb(16 185 129 / var(--tw-bg-opacity, 1))}.bg-green-500{--tw-bg-opacity:1;background-color:rgb(34 197 94 / var(--tw-bg-opacity, 1))}.bg-indigo-50{--tw-bg-opacity:1;background-color:rgb(238 242 255 / var(--tw-bg-opacity, 1))}.bg-indigo-500{--tw-bg-opacity:1;background-color:rgb(99 102 241 / var(--tw-bg-opacity, 1))}.bg-indigo-600{--tw-bg-opacity:1;background-color:rgb(79 70 229 / var(--tw-bg-opacity, 1))}.bg-red-500{--tw-bg-opacity:1;background-color:rgb(239 68 68 / var(--tw-bg-opacity, 1))}.bg-white{--tw-bg-opacity:1;background-color:rgb(255 255 255 / var(--tw-bg-opacity, 1))}.bg-amber-50{--tw-bg-opacity:1;background-color:rgb(255 251 235 / var(--tw-bg-opacity, 1))}.bg-opacity-50{--tw-bg-opacity:0.5}.bg-gradient-to-br{background-image:linear-gradient(to bottom right, var(--tw-gradient-stops))}.bg-gradient-to-r{background-image:linear-gradient(to right, var(--tw-gradient-stops))}.from-amber-500{--tw-gradient-from:#f59e0b var(--tw-gradient-from-position);--tw-gradient-to:rgb(245 158 11 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.from-emerald-500{--tw-gradient-from:#10b981 var(--tw-gradient-from-position);--tw-gradient-to:rgb(16 185 129 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.from-indigo-500{--tw-gradient-from:#6366f1 var(--tw-gradient-from-position);--tw-gradient-to:rgb(99 102 241 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.from-indigo-600{--tw-gradient-from:#4f46e5 var(--tw-gradient-from-position);--tw-gradient-to:rgb(79 70 229 / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to)}.to-amber-600{--tw-gradient-to:#d97706 var(--tw-gradient-to-position)}.to-emerald-600{--tw-gradient-to:#059669 var(--tw-gradient-to-position)}.to-indigo-600{--tw-gradient-to:#4f46e5 var(--tw-gradient-to-position)}.to-indigo-700{--tw-gradient-to:#4338ca var(--tw-gradient-to-position)}.p-3{padding:0.75rem}.p-4{padding:1rem}.p-6{padding:1.5rem}.px-4{padding-left:1rem;padding-right:1rem}.px-6{padding-left:1.5rem;padding-right:1.5rem}.py-2{padding-top:0.5rem;padding-bottom:0.5rem}.py-3{padding-top:0.75rem;padding-bottom:0.75rem}.py-4{padding-top:1rem;padding-bottom:1rem}.py-6{padding-top:1.5rem;padding-bottom:1.5rem}.pl-10{padding-left:2.5rem}.pr-4{padding-right:1rem}.text-left{text-align:left}.text-center{text-align:center}.font-sans{font-family:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"}.font-mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}.text-2xl{font-size:1.5rem;line-height:2rem}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-4xl{font-size:2.25rem;line-height:2.5rem}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:0.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:0.75rem;line-height:1rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.text-gray-800{--tw-text-opacity:1;color:rgb(31 41 55 / var(--tw-text-opacity, 1))}.text-amber-100{--tw-text-opacity:1;color:rgb(254 243 199 / var(--tw-text-opacity, 1))}.text-amber-300{--tw-text-opacity:1;color:rgb(252 211 77 / var(--tw-text-opacity, 1))}.text-emerald-100{--tw-text-opacity:1;color:rgb(209 250 229 / var(--tw-text-opacity, 1))}.text-emerald-300{--tw-text-opacity:1;color:rgb(110 231 183 / var(--tw-text-opacity, 1))}.text-gray-400{--tw-text-opacity:1;color:rgb(156 163 175 / var(--tw-text-opacity, 1))}.text-gray-600{--tw-text-opacity:1;color:rgb(75 85 99 / var(--tw-text-opacity, 1))}.text-indigo-100{--tw-text-opacity:1;color:rgb(224 231 255 / var(--tw-text-opacity, 1))}.text-indigo-200{--tw-text-opacity:1;color:rgb(199 210 254 / var(--tw-text-opacity, 1))}.text-indigo-300{--tw-text-opacity:1;color:rgb(165 180 252 / var(--tw-text-opacity, 1))}.text-indigo-600{--tw-text-opacity:1;color:rgb(79 70 229 / var(--tw-text-opacity, 1))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255 / var(--tw-text-opacity, 1))}.text-amber-600{--tw-text-opacity:1;color:rgb(217 119 6 / var(--tw-text-opacity, 1))}.text-green-600{--tw-text-opacity:1;color:rgb(22 163 74 / var(--tw-text-opacity, 1))}.text-red-600{--tw-text-opacity:1;color:rgb(220 38 38 / var(--tw-text-opacity, 1))}.shadow-2xl{--tw-shadow:0 25px 50px -12px rgb(0 0 0 / 0.25);--tw-shadow-colored:0 25px 50px -12px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-lg{--tw-shadow:0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);--tw-shadow-colored:0 10px 15px -3px var(--tw-shadow-color), 0 4px 6px -4px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-md{--tw-shadow:0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);--tw-shadow-colored:0 4px 6px -1px var(--tw-shadow-color), 0 2px 4px -2px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-sm{--tw-shadow:0 1px 2px 0 rgb(0 0 0 / 0.05);--tw-shadow-colored:0 1px 2px 0 var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.transition{transition-property:color, background-color, border-color, fill, stroke, opacity, box-shadow, transform, filter, -webkit-text-decoration-color, -webkit-backdrop-filter;transition-property:color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;transition-property:color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter, -webkit-text-decoration-color, -webkit-backdrop-filter;transition-timing-function:cubic-bezier(0.4, 0, 0.2, 1);transition-duration:150ms}.hover\:bg-emerald-400:hover{--tw-bg-opacity:1;background-color:rgb(52 211 153 / var(--tw-bg-opacity, 1))}.hover\:bg-indigo-400:hover{--tw-bg-opacity:1;background-color:rgb(129 140 248 / var(--tw-bg-opacity, 1))}.hover\:bg-indigo-50:hover{--tw-bg-opacity:1;background-color:rgb(238 242 255 / var(--tw-bg-opacity, 1))}.hover\:bg-indigo-700:hover{--tw-bg-opacity:1;background-color:rgb(67 56 202 / var(--tw-bg-opacity, 1))}.hover\:bg-gray-50:hover{--tw-bg-opacity:1;background-color:rgb(249 250 251 / var(--tw-bg-opacity, 1))}.hover\:text-gray-600:hover{--tw-text-opacity:1;color:rgb(75 85 99 / var(--tw-text-opacity, 1))}.hover\:text-indigo-600:hover{--tw-text-opacity:1;color:rgb(79 70 229 / var(--tw-text-opacity, 1))}.hover\:text-indigo-800:hover{--tw-text-opacity:1;color:rgb(55 48 163 / var(--tw-text-opacity, 1))}.hover\:text-red-800:hover{--tw-text-opacity:1;color:rgb(153 27 27 / var(--tw-text-opacity, 1))}.focus\:border-transparent:focus{border-color:transparent}.focus\:ring-2:focus{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000)}.focus\:ring-indigo-500:focus{--tw-ring-opacity:1;--tw-ring-color:rgb(99 102 241 / var(--tw-ring-opacity, 1))}@media (min-width: 640px){.sm\:inline{display:inline}}@media (min-width: 768px){.md\:grid-cols-3{grid-template-columns:repeat(3, minmax(0, 1fr))}.md\:grid-cols-4{grid-template-columns:repeat(4, minmax(0, 1fr))}}</style></head>
+<body class="bg-gray-50 font-sans text-gray-800">
+  <div id="app">
+    <header class="bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-lg sticky top-0 z-40">
+      <div class="container mx-auto px-4 py-4">
+        <div class="flex items-center justify-between flex-wrap gap-4">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-tshirt text-3xl"></i>
+            <div>
+              <h1 class="text-2xl font-bold">TextilPro</h1>
+              <p class="text-xs text-indigo-200">Sistema de Gestión de Inventario</p>
+            </div>
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button id="btnEscanear" class="bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50 transition flex items-center gap-2 shadow-md">
+              <i class="fas fa-qrcode"></i>
+              <span class="hidden sm:inline">Escanear QR</span>
+            </button>
+            <button id="btnNuevoProducto" class="bg-indigo-500 hover:bg-indigo-400 px-4 py-2 rounded-lg font-semibold transition flex items-center gap-2 shadow-md">
+              <i class="fas fa-plus"></i>
+              <span class="hidden sm:inline">Nuevo Producto</span>
+            </button>
+            <button id="btnBackup" class="bg-emerald-500 hover:bg-emerald-400 px-4 py-2 rounded-lg font-semibold transition flex items-center gap-2 shadow-md">
+              <i class="fas fa-download"></i>
+              <span class="hidden sm:inline">Backup</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="bg-white shadow-sm border-b border-gray-200 sticky top-[72px] z-30">
+      <div class="container mx-auto px-4">
+        <div class="flex overflow-x-auto">
+          <button data-tab="productos" class="tab-btn px-6 py-3 border-b-2 border-indigo-600 text-indigo-600 font-semibold whitespace-nowrap">
+            <i class="fas fa-box mr-2"></i>Productos
+          </button>
+          <button data-tab="movimientos" class="tab-btn px-6 py-3 border-b-2 border-transparent hover:text-indigo-600 font-medium whitespace-nowrap">
+            <i class="fas fa-exchange-alt mr-2"></i>Movimientos
+          </button>
+          <button data-tab="calendario" class="tab-btn px-6 py-3 border-b-2 border-transparent hover:text-indigo-600 font-medium whitespace-nowrap">
+            <i class="fas fa-calendar-alt mr-2"></i>Calendario
+          </button>
+          <button data-tab="dashboard" class="tab-btn px-6 py-3 border-b-2 border-transparent hover:text-indigo-600 font-medium whitespace-nowrap">
+            <i class="fas fa-chart-bar mr-2"></i>Dashboard
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container mx-auto px-4 py-6">
+      <!-- Tab Productos -->
+      <div id="tab-productos" class="tab-content">
+        <div class="bg-white rounded-xl shadow-md p-6 mb-6 animate-slide-in">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+            <div class="relative">
+              <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+              <input type="text" id="searchProducto" placeholder="Buscar por código o nombre..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+            </div>
+            <select id="filterCategoria" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="">Todas las categorías</option>
+            <option value="Camisetas">Camisetas</option><option value="Pantalones">Pantalones</option><option value="Vestidos">Vestidos</option><option value="Chaquetas">Chaquetas</option><option value="Faldas">Faldas</option><option value="Blusas">Blusas</option><option value="Sudaderas">Sudaderas</option><option value="Shorts">Shorts</option></select>
+            <select id="filterTalla" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="">Todas las tallas</option>
+            <option value="XS">XS</option><option value="S">S</option><option value="M">M</option><option value="L">L</option><option value="XL">XL</option><option value="XXL">XXL</option></select>
+            <select id="sortProducto" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="codigo-asc">Código ↑</option>
+              <option value="codigo-desc">Código ↓</option>
+              <option value="stock-asc">Stock Menor</option>
+              <option value="stock-desc">Stock Mayor</option>
+              <option value="nombre-asc">Nombre A-Z</option>
+            </select>
+          </div>
+          <div class="flex justify-between items-center text-sm text-gray-600">
+            <span id="totalProductos">20 productos</span>
+            <span id="stockTotal" class="font-semibold">Stock total: 436 unidades</span>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-md overflow-hidden">
+          <div class="table-container overflow-x-auto">
+            <table class="w-full">
+              <thead class="bg-gray-50 border-b-2 border-gray-200">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Código</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Nombre</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Categoría</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Talla</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Color</th>
+                  <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Stock</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Proveedor</th>
+                  <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tablaProductos" class="divide-y divide-gray-200"><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-001</td>
+      <td class="px-4 py-3 font-medium">Camiseta Básica Algodón</td>
+      <td class="px-4 py-3 text-sm">Camisetas</td>
+      <td class="px-4 py-3 text-sm">M</td>
+      <td class="px-4 py-3 text-sm">Blanco</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">45</span></td>
+      <td class="px-4 py-3 text-sm">Textiles Andinos SA</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-001')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-001')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-002</td>
+      <td class="px-4 py-3 font-medium">Jeans Skinny Hombre</td>
+      <td class="px-4 py-3 text-sm">Pantalones</td>
+      <td class="px-4 py-3 text-sm">L</td>
+      <td class="px-4 py-3 text-sm">Azul</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">28</span></td>
+      <td class="px-4 py-3 text-sm">Moda Express Ltda</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-002')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-002')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-003</td>
+      <td class="px-4 py-3 font-medium">Vestido Floral Verano</td>
+      <td class="px-4 py-3 text-sm">Vestidos</td>
+      <td class="px-4 py-3 text-sm">S</td>
+      <td class="px-4 py-3 text-sm">Rosa</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">15</span></td>
+      <td class="px-4 py-3 text-sm">Confecciones Elite</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-003')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-003')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-004</td>
+      <td class="px-4 py-3 font-medium">Chaqueta Denim</td>
+      <td class="px-4 py-3 text-sm">Chaquetas</td>
+      <td class="px-4 py-3 text-sm">M</td>
+      <td class="px-4 py-3 text-sm">Azul</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">12</span></td>
+      <td class="px-4 py-3 text-sm">Fashion Group</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-004')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-004')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-005</td>
+      <td class="px-4 py-3 font-medium">Falda Plisada</td>
+      <td class="px-4 py-3 text-sm">Faldas</td>
+      <td class="px-4 py-3 text-sm">XS</td>
+      <td class="px-4 py-3 text-sm">Negro</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">22</span></td>
+      <td class="px-4 py-3 text-sm">Textil Central</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-005')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-005')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-006</td>
+      <td class="px-4 py-3 font-medium">Blusa Satinada</td>
+      <td class="px-4 py-3 text-sm">Blusas</td>
+      <td class="px-4 py-3 text-sm">L</td>
+      <td class="px-4 py-3 text-sm">Rojo</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">18</span></td>
+      <td class="px-4 py-3 text-sm">Textiles Andinos SA</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-006')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-006')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-007</td>
+      <td class="px-4 py-3 font-medium">Sudadera Hoodie</td>
+      <td class="px-4 py-3 text-sm">Sudaderas</td>
+      <td class="px-4 py-3 text-sm">XL</td>
+      <td class="px-4 py-3 text-sm">Gris</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">35</span></td>
+      <td class="px-4 py-3 text-sm">Moda Express Ltda</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-007')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-007')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-008</td>
+      <td class="px-4 py-3 font-medium">Short Deportivo</td>
+      <td class="px-4 py-3 text-sm">Shorts</td>
+      <td class="px-4 py-3 text-sm">M</td>
+      <td class="px-4 py-3 text-sm">Negro</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">40</span></td>
+      <td class="px-4 py-3 text-sm">Confecciones Elite</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-008')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-008')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-009</td>
+      <td class="px-4 py-3 font-medium">Camiseta Polo</td>
+      <td class="px-4 py-3 text-sm">Camisetas</td>
+      <td class="px-4 py-3 text-sm">L</td>
+      <td class="px-4 py-3 text-sm">Verde</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">30</span></td>
+      <td class="px-4 py-3 text-sm">Fashion Group</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-009')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-009')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-010</td>
+      <td class="px-4 py-3 font-medium">Pantalón Formal</td>
+      <td class="px-4 py-3 text-sm">Pantalones</td>
+      <td class="px-4 py-3 text-sm">M</td>
+      <td class="px-4 py-3 text-sm">Beige</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">20</span></td>
+      <td class="px-4 py-3 text-sm">Textil Central</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-010')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-010')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-011</td>
+      <td class="px-4 py-3 font-medium">Vestido Coctel</td>
+      <td class="px-4 py-3 text-sm">Vestidos</td>
+      <td class="px-4 py-3 text-sm">S</td>
+      <td class="px-4 py-3 text-sm">Negro</td>
+      <td class="px-4 py-3 text-center"><span class="text-red-600 font-bold">8</span></td>
+      <td class="px-4 py-3 text-sm">Textiles Andinos SA</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-011')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-011')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-012</td>
+      <td class="px-4 py-3 font-medium">Chaqueta Cuero Sintético</td>
+      <td class="px-4 py-3 text-sm">Chaquetas</td>
+      <td class="px-4 py-3 text-sm">L</td>
+      <td class="px-4 py-3 text-sm">Negro</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">14</span></td>
+      <td class="px-4 py-3 text-sm">Moda Express Ltda</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-012')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-012')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-013</td>
+      <td class="px-4 py-3 font-medium">Falda Lápiz</td>
+      <td class="px-4 py-3 text-sm">Faldas</td>
+      <td class="px-4 py-3 text-sm">M</td>
+      <td class="px-4 py-3 text-sm">Azul</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">16</span></td>
+      <td class="px-4 py-3 text-sm">Confecciones Elite</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-013')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-013')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-014</td>
+      <td class="px-4 py-3 font-medium">Blusa Campesina</td>
+      <td class="px-4 py-3 text-sm">Blusas</td>
+      <td class="px-4 py-3 text-sm">S</td>
+      <td class="px-4 py-3 text-sm">Blanco</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">25</span></td>
+      <td class="px-4 py-3 text-sm">Fashion Group</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-014')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-014')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-015</td>
+      <td class="px-4 py-3 font-medium">Sudadera Deportiva</td>
+      <td class="px-4 py-3 text-sm">Sudaderas</td>
+      <td class="px-4 py-3 text-sm">XXL</td>
+      <td class="px-4 py-3 text-sm">Rojo</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">19</span></td>
+      <td class="px-4 py-3 text-sm">Textil Central</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-015')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-015')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-016</td>
+      <td class="px-4 py-3 font-medium">Short Jean</td>
+      <td class="px-4 py-3 text-sm">Shorts</td>
+      <td class="px-4 py-3 text-sm">L</td>
+      <td class="px-4 py-3 text-sm">Azul</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">32</span></td>
+      <td class="px-4 py-3 text-sm">Textiles Andinos SA</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-016')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-016')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-017</td>
+      <td class="px-4 py-3 font-medium">Camiseta Estampada</td>
+      <td class="px-4 py-3 text-sm">Camisetas</td>
+      <td class="px-4 py-3 text-sm">S</td>
+      <td class="px-4 py-3 text-sm">Amarillo</td>
+      <td class="px-4 py-3 text-center"><span class="text-green-600 font-semibold">27</span></td>
+      <td class="px-4 py-3 text-sm">Moda Express Ltda</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-017')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-017')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-018</td>
+      <td class="px-4 py-3 font-medium">Pantalón Cargo</td>
+      <td class="px-4 py-3 text-sm">Pantalones</td>
+      <td class="px-4 py-3 text-sm">XL</td>
+      <td class="px-4 py-3 text-sm">Verde</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">11</span></td>
+      <td class="px-4 py-3 text-sm">Confecciones Elite</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-018')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-018')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-019</td>
+      <td class="px-4 py-3 font-medium">Vestido Largo Noche</td>
+      <td class="px-4 py-3 text-sm">Vestidos</td>
+      <td class="px-4 py-3 text-sm">M</td>
+      <td class="px-4 py-3 text-sm">Rojo</td>
+      <td class="px-4 py-3 text-center"><span class="text-red-600 font-bold">6</span></td>
+      <td class="px-4 py-3 text-sm">Fashion Group</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-019')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-019')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr><tr class="hover:bg-gray-50 transition">
+      <td class="px-4 py-3 font-mono text-sm">PRD-020</td>
+      <td class="px-4 py-3 font-medium">Chaqueta Bomber</td>
+      <td class="px-4 py-3 text-sm">Chaquetas</td>
+      <td class="px-4 py-3 text-sm">S</td>
+      <td class="px-4 py-3 text-sm">Beige</td>
+      <td class="px-4 py-3 text-center"><span class="text-amber-600 font-semibold">13</span></td>
+      <td class="px-4 py-3 text-sm">Textil Central</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('PRD-020')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('PRD-020')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab Movimientos -->
+      <div id="tab-movimientos" class="tab-content hidden">
+        <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+          <div class="flex gap-4 mb-4 flex-wrap">
+            <select id="filterProductoMov" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 flex-1 min-w-[200px]">
+              <option value="">Todos los productos</option>
+            <option value="PRD-001">PRD-001 - Camiseta Básica Algodón</option><option value="PRD-002">PRD-002 - Jeans Skinny Hombre</option><option value="PRD-003">PRD-003 - Vestido Floral Verano</option><option value="PRD-004">PRD-004 - Chaqueta Denim</option><option value="PRD-005">PRD-005 - Falda Plisada</option><option value="PRD-006">PRD-006 - Blusa Satinada</option><option value="PRD-007">PRD-007 - Sudadera Hoodie</option><option value="PRD-008">PRD-008 - Short Deportivo</option><option value="PRD-009">PRD-009 - Camiseta Polo</option><option value="PRD-010">PRD-010 - Pantalón Formal</option><option value="PRD-011">PRD-011 - Vestido Coctel</option><option value="PRD-012">PRD-012 - Chaqueta Cuero Sintético</option><option value="PRD-013">PRD-013 - Falda Lápiz</option><option value="PRD-014">PRD-014 - Blusa Campesina</option><option value="PRD-015">PRD-015 - Sudadera Deportiva</option><option value="PRD-016">PRD-016 - Short Jean</option><option value="PRD-017">PRD-017 - Camiseta Estampada</option><option value="PRD-018">PRD-018 - Pantalón Cargo</option><option value="PRD-019">PRD-019 - Vestido Largo Noche</option><option value="PRD-020">PRD-020 - Chaqueta Bomber</option></select>
+            <select id="filterTipoMov" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="">Todos los tipos</option>
+              <option value="Entrada">Entrada</option>
+              <option value="Salida">Salida</option>
+            </select>
+            <button id="btnNuevoMovimiento" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-semibold transition flex items-center gap-2">
+              <i class="fas fa-plus"></i> Nuevo Movimiento
+            </button>
+          </div>
+          <p class="text-sm text-gray-600">Total movimientos: <span id="totalMovimientos" class="font-semibold">0</span></p>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-md overflow-hidden">
+          <div class="table-container overflow-x-auto">
+            <table class="w-full">
+              <thead class="bg-gray-50 border-b-2 border-gray-200">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fecha/Hora</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Código</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Producto</th>
+                  <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Tipo</th>
+                  <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Cantidad</th>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Responsable</th>
+                  <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tablaMovimientos" class="divide-y divide-gray-200"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab Calendario -->
+      <div id="tab-calendario" class="tab-content hidden">
+        <div class="bg-white rounded-xl shadow-md p-6">
+          <div class="mb-4 flex items-center gap-4 flex-wrap">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 bg-green-500 rounded"></div>
+              <span class="text-sm">Entradas</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 bg-red-500 rounded"></div>
+              <span class="text-sm">Salidas</span>
+            </div>
+          </div>
+          <div id="calendar" class="fc fc-media-screen fc-direction-ltr fc-theme-standard"><div class="fc-header-toolbar fc-toolbar fc-toolbar-ltr"><div class="fc-toolbar-chunk"><div class="fc-button-group"><button type="button" title="Previous month" aria-pressed="false" class="fc-prev-button fc-button fc-button-primary"><span class="fc-icon fc-icon-chevron-left" role="img"></span></button><button type="button" title="Next month" aria-pressed="false" class="fc-next-button fc-button fc-button-primary"><span class="fc-icon fc-icon-chevron-right" role="img"></span></button></div><button type="button" title="This month" disabled="" aria-pressed="false" class="fc-today-button fc-button fc-button-primary">today</button></div><div class="fc-toolbar-chunk"><h2 class="fc-toolbar-title" id="fc-dom-1">junio de 2026</h2></div><div class="fc-toolbar-chunk"><div class="fc-button-group"><button type="button" title="month view" aria-pressed="true" class="fc-dayGridMonth-button fc-button fc-button-primary fc-button-active">month</button><button type="button" title="week view" aria-pressed="false" class="fc-timeGridWeek-button fc-button fc-button-primary">week</button><button type="button" title="list view" aria-pressed="false" class="fc-listWeek-button fc-button fc-button-primary">list</button></div></div></div><div aria-labelledby="fc-dom-1" class="fc-view-harness fc-view-harness-active" style="height: 0px;"><div class="fc-dayGridMonth-view fc-view fc-daygrid"><table role="grid" class="fc-scrollgrid  fc-scrollgrid-liquid"><thead role="rowgroup"><tr role="presentation" class="fc-scrollgrid-section fc-scrollgrid-section-header "><th role="presentation"><div class="fc-scroller-harness"><div class="fc-scroller" style="overflow: hidden;"><table role="presentation" class="fc-col-header " style="width: 0px;"><colgroup></colgroup><thead role="presentation"><tr role="row"><th role="columnheader" class="fc-col-header-cell fc-day fc-day-sun"><div class="fc-scrollgrid-sync-inner"><a aria-label="domingo" class="fc-col-header-cell-cushion">dom</a></div></th><th role="columnheader" class="fc-col-header-cell fc-day fc-day-mon"><div class="fc-scrollgrid-sync-inner"><a aria-label="lunes" class="fc-col-header-cell-cushion">lun</a></div></th><th role="columnheader" class="fc-col-header-cell fc-day fc-day-tue"><div class="fc-scrollgrid-sync-inner"><a aria-label="martes" class="fc-col-header-cell-cushion">mar</a></div></th><th role="columnheader" class="fc-col-header-cell fc-day fc-day-wed"><div class="fc-scrollgrid-sync-inner"><a aria-label="miércoles" class="fc-col-header-cell-cushion">mié</a></div></th><th role="columnheader" class="fc-col-header-cell fc-day fc-day-thu"><div class="fc-scrollgrid-sync-inner"><a aria-label="jueves" class="fc-col-header-cell-cushion">jue</a></div></th><th role="columnheader" class="fc-col-header-cell fc-day fc-day-fri"><div class="fc-scrollgrid-sync-inner"><a aria-label="viernes" class="fc-col-header-cell-cushion">vie</a></div></th><th role="columnheader" class="fc-col-header-cell fc-day fc-day-sat"><div class="fc-scrollgrid-sync-inner"><a aria-label="sábado" class="fc-col-header-cell-cushion">sáb</a></div></th></tr></thead></table></div></div></th></tr></thead><tbody role="rowgroup"><tr role="presentation" class="fc-scrollgrid-section fc-scrollgrid-section-body  fc-scrollgrid-section-liquid"><td role="presentation"><div class="fc-scroller-harness fc-scroller-harness-liquid"><div class="fc-scroller fc-scroller-liquid-absolute" style="overflow: hidden auto;"><div class="fc-daygrid-body fc-daygrid-body-unbalanced " style="width: 0px;"><table role="presentation" class="fc-scrollgrid-sync-table" style="width: 0px; height: 0px;"><colgroup></colgroup><tbody role="presentation"><tr role="row"><td aria-labelledby="fc-dom-2" role="gridcell" data-date="2026-05-31" class="fc-day fc-day-sun fc-day-past fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="31 de mayo de 2026" id="fc-dom-2" class="fc-daygrid-day-number">31</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-4" role="gridcell" data-date="2026-06-01" class="fc-day fc-day-mon fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="1 de junio de 2026" id="fc-dom-4" class="fc-daygrid-day-number">1</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-6" role="gridcell" data-date="2026-06-02" class="fc-day fc-day-tue fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="2 de junio de 2026" id="fc-dom-6" class="fc-daygrid-day-number">2</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-8" role="gridcell" data-date="2026-06-03" class="fc-day fc-day-wed fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="3 de junio de 2026" id="fc-dom-8" class="fc-daygrid-day-number">3</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-10" role="gridcell" data-date="2026-06-04" class="fc-day fc-day-thu fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="4 de junio de 2026" id="fc-dom-10" class="fc-daygrid-day-number">4</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-12" role="gridcell" data-date="2026-06-05" class="fc-day fc-day-fri fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="5 de junio de 2026" id="fc-dom-12" class="fc-daygrid-day-number">5</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-14" role="gridcell" data-date="2026-06-06" class="fc-day fc-day-sat fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="6 de junio de 2026" id="fc-dom-14" class="fc-daygrid-day-number">6</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td></tr><tr role="row"><td aria-labelledby="fc-dom-16" role="gridcell" data-date="2026-06-07" class="fc-day fc-day-sun fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="7 de junio de 2026" id="fc-dom-16" class="fc-daygrid-day-number">7</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-18" role="gridcell" data-date="2026-06-08" class="fc-day fc-day-mon fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="8 de junio de 2026" id="fc-dom-18" class="fc-daygrid-day-number">8</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-20" role="gridcell" data-date="2026-06-09" class="fc-day fc-day-tue fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="9 de junio de 2026" id="fc-dom-20" class="fc-daygrid-day-number">9</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-22" role="gridcell" data-date="2026-06-10" class="fc-day fc-day-wed fc-day-past fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="10 de junio de 2026" id="fc-dom-22" class="fc-daygrid-day-number">10</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-24" role="gridcell" data-date="2026-06-11" class="fc-day fc-day-thu fc-day-today fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="11 de junio de 2026" id="fc-dom-24" class="fc-daygrid-day-number">11</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-26" role="gridcell" data-date="2026-06-12" class="fc-day fc-day-fri fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="12 de junio de 2026" id="fc-dom-26" class="fc-daygrid-day-number">12</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-28" role="gridcell" data-date="2026-06-13" class="fc-day fc-day-sat fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="13 de junio de 2026" id="fc-dom-28" class="fc-daygrid-day-number">13</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td></tr><tr role="row"><td aria-labelledby="fc-dom-30" role="gridcell" data-date="2026-06-14" class="fc-day fc-day-sun fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="14 de junio de 2026" id="fc-dom-30" class="fc-daygrid-day-number">14</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-32" role="gridcell" data-date="2026-06-15" class="fc-day fc-day-mon fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="15 de junio de 2026" id="fc-dom-32" class="fc-daygrid-day-number">15</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-34" role="gridcell" data-date="2026-06-16" class="fc-day fc-day-tue fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="16 de junio de 2026" id="fc-dom-34" class="fc-daygrid-day-number">16</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-36" role="gridcell" data-date="2026-06-17" class="fc-day fc-day-wed fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="17 de junio de 2026" id="fc-dom-36" class="fc-daygrid-day-number">17</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-38" role="gridcell" data-date="2026-06-18" class="fc-day fc-day-thu fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="18 de junio de 2026" id="fc-dom-38" class="fc-daygrid-day-number">18</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-40" role="gridcell" data-date="2026-06-19" class="fc-day fc-day-fri fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="19 de junio de 2026" id="fc-dom-40" class="fc-daygrid-day-number">19</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-42" role="gridcell" data-date="2026-06-20" class="fc-day fc-day-sat fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="20 de junio de 2026" id="fc-dom-42" class="fc-daygrid-day-number">20</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td></tr><tr role="row"><td aria-labelledby="fc-dom-44" role="gridcell" data-date="2026-06-21" class="fc-day fc-day-sun fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="21 de junio de 2026" id="fc-dom-44" class="fc-daygrid-day-number">21</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-46" role="gridcell" data-date="2026-06-22" class="fc-day fc-day-mon fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="22 de junio de 2026" id="fc-dom-46" class="fc-daygrid-day-number">22</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-48" role="gridcell" data-date="2026-06-23" class="fc-day fc-day-tue fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="23 de junio de 2026" id="fc-dom-48" class="fc-daygrid-day-number">23</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-50" role="gridcell" data-date="2026-06-24" class="fc-day fc-day-wed fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="24 de junio de 2026" id="fc-dom-50" class="fc-daygrid-day-number">24</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-52" role="gridcell" data-date="2026-06-25" class="fc-day fc-day-thu fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="25 de junio de 2026" id="fc-dom-52" class="fc-daygrid-day-number">25</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-54" role="gridcell" data-date="2026-06-26" class="fc-day fc-day-fri fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="26 de junio de 2026" id="fc-dom-54" class="fc-daygrid-day-number">26</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-56" role="gridcell" data-date="2026-06-27" class="fc-day fc-day-sat fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="27 de junio de 2026" id="fc-dom-56" class="fc-daygrid-day-number">27</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td></tr><tr role="row"><td aria-labelledby="fc-dom-58" role="gridcell" data-date="2026-06-28" class="fc-day fc-day-sun fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="28 de junio de 2026" id="fc-dom-58" class="fc-daygrid-day-number">28</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-60" role="gridcell" data-date="2026-06-29" class="fc-day fc-day-mon fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="29 de junio de 2026" id="fc-dom-60" class="fc-daygrid-day-number">29</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-62" role="gridcell" data-date="2026-06-30" class="fc-day fc-day-tue fc-day-future fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="30 de junio de 2026" id="fc-dom-62" class="fc-daygrid-day-number">30</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-64" role="gridcell" data-date="2026-07-01" class="fc-day fc-day-wed fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="1 de julio de 2026" id="fc-dom-64" class="fc-daygrid-day-number">1</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-66" role="gridcell" data-date="2026-07-02" class="fc-day fc-day-thu fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="2 de julio de 2026" id="fc-dom-66" class="fc-daygrid-day-number">2</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-68" role="gridcell" data-date="2026-07-03" class="fc-day fc-day-fri fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="3 de julio de 2026" id="fc-dom-68" class="fc-daygrid-day-number">3</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-70" role="gridcell" data-date="2026-07-04" class="fc-day fc-day-sat fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="4 de julio de 2026" id="fc-dom-70" class="fc-daygrid-day-number">4</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td></tr><tr role="row"><td aria-labelledby="fc-dom-72" role="gridcell" data-date="2026-07-05" class="fc-day fc-day-sun fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="5 de julio de 2026" id="fc-dom-72" class="fc-daygrid-day-number">5</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-74" role="gridcell" data-date="2026-07-06" class="fc-day fc-day-mon fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="6 de julio de 2026" id="fc-dom-74" class="fc-daygrid-day-number">6</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-76" role="gridcell" data-date="2026-07-07" class="fc-day fc-day-tue fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="7 de julio de 2026" id="fc-dom-76" class="fc-daygrid-day-number">7</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-78" role="gridcell" data-date="2026-07-08" class="fc-day fc-day-wed fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="8 de julio de 2026" id="fc-dom-78" class="fc-daygrid-day-number">8</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-80" role="gridcell" data-date="2026-07-09" class="fc-day fc-day-thu fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="9 de julio de 2026" id="fc-dom-80" class="fc-daygrid-day-number">9</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-82" role="gridcell" data-date="2026-07-10" class="fc-day fc-day-fri fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="10 de julio de 2026" id="fc-dom-82" class="fc-daygrid-day-number">10</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td><td aria-labelledby="fc-dom-84" role="gridcell" data-date="2026-07-11" class="fc-day fc-day-sat fc-day-future fc-day-other fc-daygrid-day"><div class="fc-daygrid-day-frame fc-scrollgrid-sync-inner"><div class="fc-daygrid-day-top"><a aria-label="11 de julio de 2026" id="fc-dom-84" class="fc-daygrid-day-number">11</a></div><div class="fc-daygrid-day-events"><div class="fc-daygrid-day-bottom" style="margin-top: 0px;"></div></div><div class="fc-daygrid-day-bg"></div></div></td></tr></tbody></table></div></div></div></td></tr></tbody></table></div></div></div>
+        </div>
+      </div>
+
+      <!-- Tab Dashboard -->
+      <div id="tab-dashboard" class="tab-content hidden">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div class="bg-gradient-to-br from-indigo-500 to-indigo-600 text-white rounded-xl shadow-lg p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-indigo-100 text-sm">Total Productos</p>
+                <p id="dashTotalProductos" class="text-3xl font-bold mt-1">20</p>
+              </div>
+              <i class="fas fa-box text-4xl text-indigo-300"></i>
+            </div>
+          </div>
+          <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white rounded-xl shadow-lg p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-emerald-100 text-sm">Stock Total</p>
+                <p id="dashStockTotal" class="text-3xl font-bold mt-1">436</p>
+              </div>
+              <i class="fas fa-warehouse text-4xl text-emerald-300"></i>
+            </div>
+          </div>
+          <div class="bg-gradient-to-br from-amber-500 to-amber-600 text-white rounded-xl shadow-lg p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-amber-100 text-sm">Stock Bajo</p>
+                <p id="dashStockBajo" class="text-3xl font-bold mt-1">2</p>
+              </div>
+              <i class="fas fa-exclamation-triangle text-4xl text-amber-300"></i>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6">
+          <h3 class="text-lg font-bold mb-4">Productos con Stock Bajo (&lt; 10 unidades)</h3>
+          <div id="stockBajoList" class="space-y-2"><div class="flex justify-between items-center p-3 bg-amber-50 rounded-lg border border-amber-200">
+        <div>
+          <p class="font-semibold">Vestido Coctel</p>
+          <p class="text-sm text-gray-600">PRD-011 - S</p>
+        </div>
+        <span class="text-amber-600 font-bold">8 unidades</span>
+      </div><div class="flex justify-between items-center p-3 bg-amber-50 rounded-lg border border-amber-200">
+        <div>
+          <p class="font-semibold">Vestido Largo Noche</p>
+          <p class="text-sm text-gray-600">PRD-019 - M</p>
+        </div>
+        <span class="text-amber-600 font-bold">6 unidades</span>
+      </div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal Scanner QR -->
+  <div id="modalScanner" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full">
+      <div class="p-6">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">Escanear Código QR</h3>
+          <button id="cerrarScanner" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times text-2xl"></i>
+          </button>
+        </div>
+        <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-4 text-sm">
+          <i class="fas fa-info-circle text-indigo-600 mr-2"></i>
+          Apunta la cámara al código QR del producto. El código debe coincidir con el código de producto registrado.
+        </div>
+        <div id="reader"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const STORAGE_KEY_PRODUCTOS = 'textilpro_productos';
+const STORAGE_KEY_MOVIMIENTOS = 'textilpro_movimientos';
+
+let productos = [];
+let movimientos = [];
+let html5QrCode = null;
+let calendar = null;
+
+const categorias = ['Camisetas', 'Pantalones', 'Vestidos', 'Chaquetas', 'Faldas', 'Blusas', 'Sudaderas', 'Shorts'];
+const tallas = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+const colores = ['Negro', 'Blanco', 'Azul', 'Rojo', 'Verde', 'Gris', 'Beige', 'Rosa', 'Amarillo'];
+const proveedores = ['Textiles Andinos SA', 'Moda Express Ltda', 'Confecciones Elite', 'Fashion Group', 'Textil Central'];
+
+const productosIniciales = [
+  {codigo: 'PRD-001', nombre: 'Camiseta Básica Algodón', categoria: 'Camisetas', talla: 'M', color: 'Blanco', cantidad: 45, proveedor: 'Textiles Andinos SA'},
+  {codigo: 'PRD-002', nombre: 'Jeans Skinny Hombre', categoria: 'Pantalones', talla: 'L', color: 'Azul', cantidad: 28, proveedor: 'Moda Express Ltda'},
+  {codigo: 'PRD-003', nombre: 'Vestido Floral Verano', categoria: 'Vestidos', talla: 'S', color: 'Rosa', cantidad: 15, proveedor: 'Confecciones Elite'},
+  {codigo: 'PRD-004', nombre: 'Chaqueta Denim', categoria: 'Chaquetas', talla: 'M', color: 'Azul', cantidad: 12, proveedor: 'Fashion Group'},
+  {codigo: 'PRD-005', nombre: 'Falda Plisada', categoria: 'Faldas', talla: 'XS', color: 'Negro', cantidad: 22, proveedor: 'Textil Central'},
+  {codigo: 'PRD-006', nombre: 'Blusa Satinada', categoria: 'Blusas', talla: 'L', color: 'Rojo', cantidad: 18, proveedor: 'Textiles Andinos SA'},
+  {codigo: 'PRD-007', nombre: 'Sudadera Hoodie', categoria: 'Sudaderas', talla: 'XL', color: 'Gris', cantidad: 35, proveedor: 'Moda Express Ltda'},
+  {codigo: 'PRD-008', nombre: 'Short Deportivo', categoria: 'Shorts', talla: 'M', color: 'Negro', cantidad: 40, proveedor: 'Confecciones Elite'},
+  {codigo: 'PRD-009', nombre: 'Camiseta Polo', categoria: 'Camisetas', talla: 'L', color: 'Verde', cantidad: 30, proveedor: 'Fashion Group'},
+  {codigo: 'PRD-010', nombre: 'Pantalón Formal', categoria: 'Pantalones', talla: 'M', color: 'Beige', cantidad: 20, proveedor: 'Textil Central'},
+  {codigo: 'PRD-011', nombre: 'Vestido Coctel', categoria: 'Vestidos', talla: 'S', color: 'Negro', cantidad: 8, proveedor: 'Textiles Andinos SA'},
+  {codigo: 'PRD-012', nombre: 'Chaqueta Cuero Sintético', categoria: 'Chaquetas', talla: 'L', color: 'Negro', cantidad: 14, proveedor: 'Moda Express Ltda'},
+  {codigo: 'PRD-013', nombre: 'Falda Lápiz', categoria: 'Faldas', talla: 'M', color: 'Azul', cantidad: 16, proveedor: 'Confecciones Elite'},
+  {codigo: 'PRD-014', nombre: 'Blusa Campesina', categoria: 'Blusas', talla: 'S', color: 'Blanco', cantidad: 25, proveedor: 'Fashion Group'},
+  {codigo: 'PRD-015', nombre: 'Sudadera Deportiva', categoria: 'Sudaderas', talla: 'XXL', color: 'Rojo', cantidad: 19, proveedor: 'Textil Central'},
+  {codigo: 'PRD-016', nombre: 'Short Jean', categoria: 'Shorts', talla: 'L', color: 'Azul', cantidad: 32, proveedor: 'Textiles Andinos SA'},
+  {codigo: 'PRD-017', nombre: 'Camiseta Estampada', categoria: 'Camisetas', talla: 'S', color: 'Amarillo', cantidad: 27, proveedor: 'Moda Express Ltda'},
+  {codigo: 'PRD-018', nombre: 'Pantalón Cargo', categoria: 'Pantalones', talla: 'XL', color: 'Verde', cantidad: 11, proveedor: 'Confecciones Elite'},
+  {codigo: 'PRD-019', nombre: 'Vestido Largo Noche', categoria: 'Vestidos', talla: 'M', color: 'Rojo', cantidad: 6, proveedor: 'Fashion Group'},
+  {codigo: 'PRD-020', nombre: 'Chaqueta Bomber', categoria: 'Chaquetas', talla: 'S', color: 'Beige', cantidad: 13, proveedor: 'Textil Central'}
+];
+
+function init() {
+  cargarDatos();
+  setupEventListeners();
+  initCalendar();
+  renderProductos();
+  renderMovimientos();
+  updateDashboard();
+  poblarFiltros();
+}
+
+function cargarDatos() {
+  const prodStorage = localStorage.getItem(STORAGE_KEY_PRODUCTOS);
+  const movStorage = localStorage.getItem(STORAGE_KEY_MOVIMIENTOS);
+  
+  if (prodStorage) {
+    productos = JSON.parse(prodStorage);
+  } else {
+    productos = [...productosIniciales];
+    guardarProductos();
+  }
+  
+  if (movStorage) {
+    movimientos = JSON.parse(movStorage);
+  }
+}
+
+function guardarProductos() {
+  localStorage.setItem(STORAGE_KEY_PRODUCTOS, JSON.stringify(productos));
+}
+
+function guardarMovimientos() {
+  localStorage.setItem(STORAGE_KEY_MOVIMIENTOS, JSON.stringify(movimientos));
+}
+
+function setupEventListeners() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => cambiarTab(btn.dataset.tab));
+  });
+  
+  document.getElementById('btnNuevoProducto').addEventListener('click', mostrarFormProducto);
+  document.getElementById('btnNuevoMovimiento').addEventListener('click', mostrarFormMovimiento);
+  document.getElementById('btnEscanear').addEventListener('click', abrirScanner);
+  document.getElementById('btnBackup').addEventListener('click', exportarBackup);
+  document.getElementById('cerrarScanner').addEventListener('click', cerrarScanner);
+  
+  document.getElementById('searchProducto').addEventListener('input', renderProductos);
+  document.getElementById('filterCategoria').addEventListener('change', renderProductos);
+  document.getElementById('filterTalla').addEventListener('change', renderProductos);
+  document.getElementById('sortProducto').addEventListener('change', renderProductos);
+  
+  document.getElementById('filterProductoMov').addEventListener('change', renderMovimientos);
+  document.getElementById('filterTipoMov').addEventListener('change', renderMovimientos);
+}
+
+function cambiarTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    if (btn.dataset.tab === tab) {
+      btn.classList.add('border-indigo-600', 'text-indigo-600', 'font-semibold');
+      btn.classList.remove('border-transparent');
+    } else {
+      btn.classList.remove('border-indigo-600', 'text-indigo-600', 'font-semibold');
+      btn.classList.add('border-transparent');
+    }
+  });
+  
+  document.querySelectorAll('.tab-content').forEach(content => {
+    content.classList.add('hidden');
+  });
+  document.getElementById(`tab-${tab}`).classList.remove('hidden');
+  
+  if (tab === 'dashboard') updateDashboard();
+  if (tab === 'calendario' && calendar) {
+    setTimeout(() => calendar.updateSize(), 100);
+  }
+}
+
+function poblarFiltros() {
+  const selectCat = document.getElementById('filterCategoria');
+  categorias.forEach(cat => {
+    const option = document.createElement('option');
+    option.value = cat;
+    option.textContent = cat;
+    selectCat.appendChild(option);
+  });
+  
+  const selectTalla = document.getElementById('filterTalla');
+  tallas.forEach(talla => {
+    const option = document.createElement('option');
+    option.value = talla;
+    option.textContent = talla;
+    selectTalla.appendChild(option);
+  });
+  
+  const selectProdMov = document.getElementById('filterProductoMov');
+  productos.forEach(prod => {
+    const option = document.createElement('option');
+    option.value = prod.codigo;
+    option.textContent = `${prod.codigo} - ${prod.nombre}`;
+    selectProdMov.appendChild(option);
+  });
+}
+
+function renderProductos() {
+  let filtrados = [...productos];
+  
+  const search = document.getElementById('searchProducto').value.toLowerCase();
+  const cat = document.getElementById('filterCategoria').value;
+  const talla = document.getElementById('filterTalla').value;
+  const sort = document.getElementById('sortProducto').value;
+  
+  if (search) {
+    filtrados = filtrados.filter(p => 
+      p.codigo.toLowerCase().includes(search) || 
+      p.nombre.toLowerCase().includes(search)
+    );
+  }
+  if (cat) filtrados = filtrados.filter(p => p.categoria === cat);
+  if (talla) filtrados = filtrados.filter(p => p.talla === talla);
+  
+  filtrados.sort((a, b) => {
+    switch(sort) {
+      case 'codigo-asc': return a.codigo.localeCompare(b.codigo);
+      case 'codigo-desc': return b.codigo.localeCompare(a.codigo);
+      case 'stock-asc': return a.cantidad - b.cantidad;
+      case 'stock-desc': return b.cantidad - a.cantidad;
+      case 'nombre-asc': return a.nombre.localeCompare(b.nombre);
+      default: return 0;
+    }
+  });
+  
+  const tbody = document.getElementById('tablaProductos');
+  tbody.innerHTML = '';
+  
+  filtrados.forEach(prod => {
+    const stockClass = prod.cantidad < 10 ? 'text-red-600 font-bold' : prod.cantidad < 20 ? 'text-amber-600 font-semibold' : 'text-green-600 font-semibold';
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-gray-50 transition';
+    tr.innerHTML = `
+      <td class="px-4 py-3 font-mono text-sm">${prod.codigo}</td>
+      <td class="px-4 py-3 font-medium">${prod.nombre}</td>
+      <td class="px-4 py-3 text-sm">${prod.categoria}</td>
+      <td class="px-4 py-3 text-sm">${prod.talla}</td>
+      <td class="px-4 py-3 text-sm">${prod.color}</td>
+      <td class="px-4 py-3 text-center"><span class="${stockClass}">${prod.cantidad}</span></td>
+      <td class="px-4 py-3 text-sm">${prod.proveedor}</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarProducto('${prod.codigo}')" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarProducto('${prod.codigo}')" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  
+  document.getElementById('totalProductos').textContent = `${filtrados.length} productos`;
+  const stockTotal = productos.reduce((sum, p) => sum + p.cantidad, 0);
+  document.getElementById('stockTotal').textContent = `Stock total: ${stockTotal} unidades`;
+}
+
+async function mostrarFormProducto(codigo = null) {
+  const esEdicion = codigo !== null;
+  const producto = esEdicion ? productos.find(p => p.codigo === codigo) : {};
+  
+  const { value: formValues } = await Swal.fire({
+    title: esEdicion ? 'Editar Producto' : 'Nuevo Producto',
+    html: `
+      <div class="text-left space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Código *</label>
+          <input id="swal-codigo" class="swal2-input" placeholder="PRD-XXX" value="${producto.codigo || ''}" ${esEdicion ? 'readonly' : ''}>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Nombre *</label>
+          <input id="swal-nombre" class="swal2-input" placeholder="Nombre de la prenda" value="${producto.nombre || ''}">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium mb-1">Categoría *</label>
+            <select id="swal-categoria" class="swal2-select">
+              ${categorias.map(c => `<option value="${c}" ${producto.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Talla *</label>
+            <select id="swal-talla" class="swal2-select">
+              ${tallas.map(t => `<option value="${t}" ${producto.talla === t ? 'selected' : ''}>${t}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium mb-1">Color *</label>
+            <select id="swal-color" class="swal2-select">
+              ${colores.map(c => `<option value="${c}" ${producto.color === c ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Stock *</label>
+            <input id="swal-cantidad" type="number" min="0" class="swal2-input" value="${producto.cantidad || 0}">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Proveedor *</label>
+          <select id="swal-proveedor" class="swal2-select">
+            ${proveedores.map(p => `<option value="${p}" ${producto.proveedor === p ? 'selected' : ''}>${p}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    `,
+    focusConfirm: false,
+    showCancelButton: true,
+    confirmButtonText: esEdicion ? 'Actualizar' : 'Guardar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#4f46e5',
+    preConfirm: () => {
+      const codigo = document.getElementById('swal-codigo').value.trim();
+      const nombre = document.getElementById('swal-nombre').value.trim();
+      const cantidad = parseInt(document.getElementById('swal-cantidad').value);
+      
+      if (!codigo || !nombre) {
+        Swal.showValidationMessage('Código y nombre son obligatorios');
+        return false;
+      }
+      if (!esEdicion && productos.find(p => p.codigo === codigo)) {
+        Swal.showValidationMessage('El código ya existe');
+        return false;
+      }
+      if (isNaN(cantidad) || cantidad < 0) {
+        Swal.showValidationMessage('Stock debe ser un número válido');
+        return false;
+      }
+      
+      return {
+        codigo,
+        nombre,
+        categoria: document.getElementById('swal-categoria').value,
+        talla: document.getElementById('swal-talla').value,
+        color: document.getElementById('swal-color').value,
+        cantidad,
+        proveedor: document.getElementById('swal-proveedor').value
+      };
+    }
+  });
+  
+  if (formValues) {
+    if (esEdicion) {
+      const index = productos.findIndex(p => p.codigo === codigo);
+      productos[index] = formValues;
+      Swal.fire('Actualizado', 'Producto actualizado correctamente', 'success');
+    } else {
+      productos.push(formValues);
+      Swal.fire('Creado', 'Producto registrado correctamente', 'success');
+    }
+    guardarProductos();
+    renderProductos();
+    updateDashboard();
+    poblarFiltrosProductos();
+  }
+}
+
+function editarProducto(codigo) {
+  mostrarFormProducto(codigo);
+}
+
+function eliminarProducto(codigo) {
+  Swal.fire({
+    title: '¿Eliminar producto?',
+    text: 'Esta acción no se puede deshacer',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, eliminar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#dc2626'
+  }).then((result) => {
+    if (result.isConfirmed) {
+      productos = productos.filter(p => p.codigo !== codigo);
+      movimientos = movimientos.filter(m => m.codigo !== codigo);
+      guardarProductos();
+      guardarMovimientos();
+      renderProductos();
+      renderMovimientos();
+      updateDashboard();
+      Swal.fire('Eliminado', 'Producto eliminado correctamente', 'success');
+    }
+  });
+}
+
+function renderMovimientos() {
+  let filtrados = [...movimientos];
+  
+  const codigoProd = document.getElementById('filterProductoMov').value;
+  const tipo = document.getElementById('filterTipoMov').value;
+  
+  if (codigoProd) filtrados = filtrados.filter(m => m.codigo === codigoProd);
+  if (tipo) filtrados = filtrados.filter(m => m.tipo === tipo);
+  
+  filtrados.sort((a, b) => new Date(b.fechaHora) - new Date(a.fechaHora));
+  
+  const tbody = document.getElementById('tablaMovimientos');
+  tbody.innerHTML = '';
+  
+  filtrados.forEach((mov, idx) => {
+    const producto = productos.find(p => p.codigo === mov.codigo);
+    const fecha = new Date(mov.fechaHora);
+    const tipoClass = mov.tipo === 'Entrada' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-gray-50 transition';
+    tr.innerHTML = `
+      <td class="px-4 py-3 text-sm">${fecha.toLocaleDateString('es-ES')} ${fecha.toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'})}</td>
+      <td class="px-4 py-3 font-mono text-sm">${mov.codigo}</td>
+      <td class="px-4 py-3 text-sm">${producto ? producto.nombre : 'N/A'}</td>
+      <td class="px-4 py-3 text-center">
+        <span class="px-2 py-1 rounded-full text-xs font-semibold ${tipoClass}">
+          ${mov.tipo}
+        </span>
+      </td>
+      <td class="px-4 py-3 text-center font-semibold">${mov.cantidad}</td>
+      <td class="px-4 py-3 text-sm">${mov.responsable}</td>
+      <td class="px-4 py-3">
+        <div class="flex justify-center gap-2">
+          <button onclick="editarMovimiento(${idx})" class="text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="eliminarMovimiento(${idx})" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  
+  document.getElementById('totalMovimientos').textContent = filtrados.length;
+  updateCalendar();
+}
+
+async function mostrarFormMovimiento(codigoPredef = null) {
+  if (productos.length === 0) {
+    Swal.fire('Sin productos', 'Registra productos antes de crear movimientos', 'warning');
+    return;
+  }
+  
+  const { value: formValues } = await Swal.fire({
+    title: 'Nuevo Movimiento de Inventario',
+    html: `
+      <div class="text-left space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Producto *</label>
+          <select id="swal-mov-producto" class="swal2-select">
+            ${productos.map(p => `<option value="${p.codigo}" ${codigoPredef === p.codigo ? 'selected' : ''}>${p.codigo} - ${p.nombre} (Stock: ${p.cantidad})</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Tipo de Movimiento *</label>
+          <select id="swal-mov-tipo" class="swal2-select">
+            <option value="Entrada">Entrada</option>
+            <option value="Salida">Salida</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Cantidad *</label>
+          <input id="swal-mov-cantidad" type="number" min="1" class="swal2-input" placeholder="0">
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Responsable *</label>
+          <input id="swal-mov-responsable" class="swal2-input" placeholder="Nombre del responsable">
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Fecha y Hora</label>
+          <input id="swal-mov-fecha" type="datetime-local" class="swal2-input" value="${new Date().toISOString().slice(0, 16)}">
+        </div>
+      </div>
+    `,
+    focusConfirm: false,
+    showCancelButton: true,
+    confirmButtonText: 'Registrar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#4f46e5',
+    preConfirm: () => {
+      const codigo = document.getElementById('swal-mov-producto').value;
+      const tipo = document.getElementById('swal-mov-tipo').value;
+      const cantidad = parseInt(document.getElementById('swal-mov-cantidad').value);
+      const responsable = document.getElementById('swal-mov-responsable').value.trim();
+      const fechaHora = document.getElementById('swal-mov-fecha').value;
+      
+      if (!cantidad || cantidad <= 0) {
+        Swal.showValidationMessage('Cantidad debe ser mayor a 0');
+        return false;
+      }
+      if (!responsable) {
+        Swal.showValidationMessage('Responsable es obligatorio');
+        return false;
+      }
+      
+      const producto = productos.find(p => p.codigo === codigo);
+      if (tipo === 'Salida' && producto.cantidad < cantidad) {
+        Swal.showValidationMessage(`Stock insuficiente. Disponible: ${producto.cantidad}`);
+        return false;
+      }
+      
+      return { codigo, tipo, cantidad, responsable, fechaHora };
+    }
+  });
+  
+  if (formValues) {
+    registrarMovimiento(formValues);
+  }
+}
+
+function registrarMovimiento(data) {
+  const producto = productos.find(p => p.codigo === data.codigo);
+  if (!producto) return;
+  
+  if (data.tipo === 'Entrada') {
+    producto.cantidad += data.cantidad;
+  } else {
+    producto.cantidad -= data.cantidad;
+  }
+  
+  movimientos.push({
+    ...data,
+    id: Date.now(),
+    fechaHora: data.fechaHora || new Date().toISOString()
+  });
+  
+  guardarProductos();
+  guardarMovimientos();
+  renderProductos();
+  renderMovimientos();
+  updateDashboard();
+  Swal.fire('Registrado', 'Movimiento registrado correctamente', 'success');
+}
+
+function editarMovimiento(idx) {
+  Swal.fire('Info', 'Para editar, elimina el movimiento y créalo nuevamente', 'info');
+}
+
+function eliminarMovimiento(idx) {
+  Swal.fire({
+    title: '¿Eliminar movimiento?',
+    text: 'Esto revertirá el stock del producto',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, eliminar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#dc2626'
+  }).then((result) => {
+    if (result.isConfirmed) {
+      const mov = movimientos[idx];
+      const producto = productos.find(p => p.codigo === mov.codigo);
+      
+      if (producto) {
+        if (mov.tipo === 'Entrada') {
+          producto.cantidad -= mov.cantidad;
+        } else {
+          producto.cantidad += mov.cantidad;
+        }
+      }
+      
+      movimientos.splice(idx, 1);
+      guardarProductos();
+      guardarMovimientos();
+      renderProductos();
+      renderMovimientos();
+      updateDashboard();
+      Swal.fire('Eliminado', 'Movimiento eliminado y stock revertido', 'success');
+    }
+  });
+}
+
+function abrirScanner() {
+  const modal = document.getElementById('modalScanner');
+  modal.classList.remove('hidden');
+  
+  if (!html5QrCode) {
+    html5QrCode = new Html5Qrcode("reader");
+  }
+  
+  const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+  
+  html5QrCode.start(
+    { facingMode: "environment" },
+    config,
+    (decodedText) => {
+      html5QrCode.stop();
+      cerrarScanner();
+      procesarQR(decodedText);
+    },
+    (errorMessage) => {}
+  ).catch(err => {
+    Swal.fire('Error', 'No se pudo acceder a la cámara. Verifica los permisos.', 'error');
+    cerrarScanner();
+  });
+}
+
+function cerrarScanner() {
+  const modal = document.getElementById('modalScanner');
+  modal.classList.add('hidden');
+  
+  if (html5QrCode) {
+    html5QrCode.stop().catch(err => {});
+  }
+}
+
+function procesarQR(codigo) {
+  const producto = productos.find(p => p.codigo === codigo);
+  
+  if (!producto) {
+    Swal.fire('No encontrado', `No existe producto con código: ${codigo}`, 'warning');
+    return;
+  }
+  
+  Swal.fire({
+    title: 'Producto Encontrado',
+    html: `
+      <div class="text-left">
+        <p><strong>Código:</strong> ${producto.codigo}</p>
+        <p><strong>Nombre:</strong> ${producto.nombre}</p>
+        <p><strong>Stock actual:</strong> ${producto.cantidad} unidades</p>
+      </div>
+    `,
+    icon: 'success',
+    confirmButtonText: 'Registrar Movimiento'
+  }).then(() => {
+    mostrarFormMovimiento(codigo);
+  });
+}
+
+function initCalendar() {
+  const calendarEl = document.getElementById('calendar');
+  calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: 'dayGridMonth',
+    locale: 'es',
+    headerToolbar: {
+      left: 'prev,next today',
+      center: 'title',
+      right: 'dayGridMonth,timeGridWeek,listWeek'
+    },
+    events: [],
+    eventClick: function(info) {
+      const mov = info.event.extendedProps;
+      Swal.fire({
+        title: `${mov.tipo} de Inventario`,
+        html: `
+          <div class="text-left">
+            <p><strong>Producto:</strong> ${mov.nombre}</p>
+            <p><strong>Cantidad:</strong> ${mov.cantidad} unidades</p>
+            <p><strong>Responsable:</strong> ${mov.responsable}</p>
+            <p><strong>Fecha:</strong> ${new Date(mov.fechaHora).toLocaleString('es-ES')}</p>
+          </div>
+        `,
+        icon: 'info'
+      });
+    }
+  });
+  calendar.render();
+}
+
+function updateCalendar() {
+  if (!calendar) return;
+  
+  calendar.removeAllEvents();
+  
+  movimientos.forEach(mov => {
+    const producto = productos.find(p => p.codigo === mov.codigo);
+    const color = mov.tipo === 'Entrada' ? '#10b981' : '#ef4444';
+    
+    calendar.addEvent({
+      title: `${mov.tipo}: ${producto ? producto.nombre : mov.codigo}`,
+      start: mov.fechaHora,
+      backgroundColor: color,
+      borderColor: color,
+      extendedProps: {
+        ...mov,
+        nombre: producto ? producto.nombre : 'N/A'
+      }
+    });
+  });
+}
+
+function updateDashboard() {
+  document.getElementById('dashTotalProductos').textContent = productos.length;
+  
+  const stockTotal = productos.reduce((sum, p) => sum + p.cantidad, 0);
+  document.getElementById('dashStockTotal').textContent = stockTotal;
+  
+  const stockBajo = productos.filter(p => p.cantidad < 10);
+  document.getElementById('dashStockBajo').textContent = stockBajo.length;
+  
+  const listEl = document.getElementById('stockBajoList');
+  listEl.innerHTML = '';
+  
+  if (stockBajo.length === 0) {
+    listEl.innerHTML = '<p class="text-gray-500 text-center py-4">No hay productos con stock bajo</p>';
+  } else {
+    stockBajo.forEach(prod => {
+      const div = document.createElement('div');
+      div.className = 'flex justify-between items-center p-3 bg-amber-50 rounded-lg border border-amber-200';
+      div.innerHTML = `
+        <div>
+          <p class="font-semibold">${prod.nombre}</p>
+          <p class="text-sm text-gray-600">${prod.codigo} - ${prod.talla}</p>
+        </div>
+        <span class="text-amber-600 font-bold">${prod.cantidad} unidades</span>
+      `;
+      listEl.appendChild(div);
+    });
+  }
+}
+
+function poblarFiltrosProductos() {
+  const select = document.getElementById('filterProductoMov');
+  select.innerHTML = '<option value="">Todos los productos</option>';
+  productos.forEach(prod => {
+    const option = document.createElement('option');
+    option.value = prod.codigo;
+    option.textContent = `${prod.codigo} - ${prod.nombre}`;
+    select.appendChild(option);
+  });
+}
+
+function exportarBackup() {
+  const contenido = `// Backup TextilPro - ${new Date().toLocaleString('es-ES')}
+// Importar con: const { productos, movimientos } = require('./backup-textilpro.js');
+
+const productos = ${JSON.stringify(productos, null, 2)};
+
+const movimientos = ${JSON.stringify(movimientos, null, 2)};
+
+// Para restaurar en la aplicación:
+// localStorage.setItem('textilpro_productos', JSON.stringify(productos));
+// localStorage.setItem('textilpro_movimientos', JSON.stringify(movimientos));
+`;
+
+  const blob = new Blob([contenido], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backup-textilpro-${Date.now()}.js`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  Swal.fire('Descargado', 'Backup generado correctamente', 'success');
+}
+
+window.editarProducto = editarProducto;
+window.eliminarProducto = eliminarProducto;
+window.editarMovimiento = editarMovimiento;
+window.eliminarMovimiento = eliminarMovimiento;
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest("[data-product-id]");if(!a)return;e.preventDefault();var pid=a.getAttribute("data-product-id");if(pid)parent.postMessage({type:"ecto-artifact-link-click",productId:pid},"*")})})();</script>
+
+</body></html>
